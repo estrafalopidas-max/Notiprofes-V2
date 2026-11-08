@@ -1,0 +1,2577 @@
+import {
+  ActividadProgramada,
+  BoletinSemanal,
+  DiaProgramacion,
+  EventoLargoPlazo,
+  OpcionesClonarBoletin,
+  OperacionBoletin,
+} from '../types/notiprofes';
+import {
+  calcularEstadoCalendarioBoletin,
+  formatearRangoSemanaSegunMeses,
+  generarDiasSiguienteSemanaConFestivos,
+  obtenerCalendarioOficialBoletin,
+} from './calendarioEscolar2026';
+import { formatearTextoAHtmlSeguro } from './formatoTexto';
+
+const MAPA_MESES_ES: Record<string, number> = {
+  enero: 0,
+  ene: 0,
+  febrero: 1,
+  feb: 1,
+  marzo: 2,
+  mar: 2,
+  abril: 3,
+  abr: 3,
+  mayo: 4,
+  may: 4,
+  junio: 5,
+  jun: 5,
+  julio: 6,
+  jul: 6,
+  agosto: 7,
+  ago: 7,
+  septiembre: 8,
+  sep: 8,
+  sept: 8,
+  setiembre: 8,
+  octubre: 9,
+  oct: 9,
+  noviembre: 10,
+  nov: 10,
+  diciembre: 11,
+  dic: 11,
+};
+
+/**
+ * Obtiene la fecha de referencia (lunes de la semana del boletín) para evaluar qué actividades a largo plazo siguen vigentes.
+ */
+export function extraerFechaReferenciaSemana(
+  diasSemana: DiaProgramacion[],
+  fechaEmision?: string,
+  anioDefecto = 2026
+): Date {
+  // 1. Intentar extraer del primer día de la programación semanal (ej. "LUNES 9 DE NOVIEMBRE")
+  const primerDiaTexto = (diasSemana?.[0]?.fechaTexto || '').toLowerCase();
+  const matchDia = primerDiaTexto.match(
+    /(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)/i
+  );
+  if (matchDia) {
+    const dia = Number(matchDia[1]);
+    const mes = MAPA_MESES_ES[matchDia[2].toLowerCase()];
+    if (mes !== undefined) {
+      return new Date(anioDefecto, mes, dia, 0, 0, 0, 0);
+    }
+  }
+
+  // 2. Respaldo usando fechaEmision (DD/MM/YYYY) restando 4 días (viernes -> lunes)
+  if (fechaEmision) {
+    const partes = fechaEmision.trim().split('/');
+    if (partes.length === 3) {
+      const d = Number(partes[0]);
+      const m = Number(partes[1]) - 1;
+      const y = Number(partes[2]);
+      if (!isNaN(d) && !isNaN(m) && !isNaN(y)) {
+        const fechaViernes = new Date(y, m, d, 0, 0, 0, 0);
+        fechaViernes.setDate(fechaViernes.getDate() - 4);
+        return fechaViernes;
+      }
+    }
+  }
+
+  return new Date(anioDefecto, 0, 1, 0, 0, 0, 0);
+}
+
+/**
+ * Determina la última fecha mencionada en el texto de un EventoLargoPlazo (ej. "Del 9 al 13 de noviembre" -> 13 nov).
+ * Si el texto no contiene una fecha específica reconocible, devuelve null para conservarlo por seguridad.
+ */
+export function extraerFechaFinEventoLargoPlazo(
+  fechaTexto: string,
+  anioBase = 2026
+): Date | null {
+  const texto = (fechaTexto || '').toLowerCase().trim();
+  if (!texto) return null;
+
+  const matchAnioExplicito = texto.match(/\b(20\d{2})\b/);
+  const anioEvento = matchAnioExplicito ? Number(matchAnioExplicito[1]) : anioBase;
+
+  // Buscar todas las menciones de "<día> [de] <mes> [de <año>]"
+  const regexDiaMes =
+    /(\d{1,2})\s*(?:de\s+)?(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre|ene|feb|mar|abr|may|jun|jul|ago|sep|sept|oct|nov|dic)\b(?:\s*(?:de\s+)?(20\d{2}))?/gi;
+
+  let coincidencia: RegExpExecArray | null;
+  let ultimaFecha: Date | null = null;
+
+  while ((coincidencia = regexDiaMes.exec(texto)) !== null) {
+    const dia = Number(coincidencia[1]);
+    const mes = MAPA_MESES_ES[coincidencia[2].toLowerCase()];
+    const anio = coincidencia[3] ? Number(coincidencia[3]) : anioEvento;
+    if (dia >= 1 && dia <= 31 && mes !== undefined) {
+      const candidata = new Date(anio, mes, dia, 23, 59, 59, 999);
+      if (!ultimaFecha || candidata.getTime() > ultimaFecha.getTime()) {
+        ultimaFecha = candidata;
+      }
+    }
+  }
+
+  if (ultimaFecha) {
+    return ultimaFecha;
+  }
+
+  // Si solo menciona el mes y año (ej. "Noviembre 2026"), usar el último día de ese mes
+  const regexSoloMes =
+    /\b(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)\b(?:\s*(?:de\s+)?(20\d{2}))?/i;
+  const matchSoloMes = texto.match(regexSoloMes);
+  if (matchSoloMes) {
+    const mes = MAPA_MESES_ES[matchSoloMes[1].toLowerCase()];
+    const anio = matchSoloMes[2] ? Number(matchSoloMes[2]) : anioEvento;
+    if (mes !== undefined) {
+      return new Date(anio, mes + 1, 0, 23, 59, 59, 999);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Filtra la lista de eventos del Cronograma Anual y Actividades a Largo Plazo,
+ * conservando únicamente las actividades futuras o vigentes para la semana del boletín.
+ */
+export function filtrarEventosLargoPlazoVigentes(
+  eventos: EventoLargoPlazo[],
+  diasSemana: DiaProgramacion[],
+  fechaEmision?: string,
+  anioDefecto = 2026
+): EventoLargoPlazo[] {
+  const fechaReferencia = extraerFechaReferenciaSemana(
+    diasSemana,
+    fechaEmision,
+    anioDefecto
+  );
+  return eventos.filter((ev) => {
+    const fechaFin = extraerFechaFinEventoLargoPlazo(ev.fechaTexto, anioDefecto);
+    if (!fechaFin) return true;
+    return fechaFin.getTime() >= fechaReferencia.getTime();
+  });
+}
+
+export interface CriteriosFiltroBoletin {
+  busqueda: string;
+  diaId: string; // 'todos' o id del día
+  soloReprogramadas: boolean;
+}
+
+/**
+ * Filtra los días y actividades de un boletín según texto libre (actividad, responsable, lugar),
+ * día específico o estado de reprogramación.
+ */
+export function filtrarDiasBoletin(
+  dias: DiaProgramacion[],
+  criterios: CriteriosFiltroBoletin
+): DiaProgramacion[] {
+  const termino = criterios.busqueda.trim().toLowerCase();
+
+  return dias
+    .filter((dia) => criterios.diaId === 'todos' || dia.id === criterios.diaId)
+    .map((dia) => {
+      if (dia.esFestivo && !termino && !criterios.soloReprogramadas) {
+        return dia;
+      }
+
+      const actividadesFiltradas = dia.actividades.filter((act) => {
+        if (criterios.soloReprogramadas && !act.reprogramada) {
+          return false;
+        }
+        if (!termino) {
+          return true;
+        }
+        const coincideTitulo = act.titulo.toLowerCase().includes(termino);
+        const coincideResponsable = act.responsable.toLowerCase().includes(termino);
+        const coincideLugar = act.lugar.toLowerCase().includes(termino);
+        const coincideHora = act.hora.toLowerCase().includes(termino);
+        const coincideNota = (act.notaReprogramacion || '').toLowerCase().includes(termino);
+        return (
+          coincideTitulo ||
+          coincideResponsable ||
+          coincideLugar ||
+          coincideHora ||
+          coincideNota
+        );
+      });
+
+      return {
+        ...dia,
+        actividades: actividadesFiltradas,
+      };
+    })
+    .filter((dia) => {
+      if (!termino && !criterios.soloReprogramadas) {
+        return true;
+      }
+      return dia.actividades.length > 0;
+    });
+}
+
+/**
+ * Valida que una actividad programada tenga todos los campos obligatorios antes de guardarse.
+ */
+export function validarActividadInput(datos: {
+  titulo: string;
+  responsable: string;
+  hora: string;
+  lugar: string;
+}): { valido: boolean; error?: string } {
+  if (!datos.titulo || datos.titulo.trim().length < 3) {
+    return { valido: false, error: 'La descripción de la actividad debe tener al menos 3 caracteres.' };
+  }
+  if (!datos.responsable || datos.responsable.trim().length < 2) {
+    return { valido: false, error: 'El responsable es obligatorio.' };
+  }
+  if (!datos.hora || datos.hora.trim().length < 2) {
+    return { valido: false, error: 'El horario o rango de hora es obligatorio.' };
+  }
+  if (!datos.lugar || datos.lugar.trim().length < 2) {
+    return { valido: false, error: 'El lugar de realización es obligatorio.' };
+  }
+  return { valido: true };
+}
+
+/**
+ * Aplica una operación colaborativa de forma idempotente sobre el estado del boletín.
+ */
+export function aplicarOperacionBoletin(
+  boletin: BoletinSemanal,
+  op: OperacionBoletin,
+  timestampIso: string = new Date().toISOString()
+): BoletinSemanal {
+  const baseActualizada: BoletinSemanal = {
+    ...boletin,
+    ultimaActualizacion: timestampIso,
+    actualizadoPor: op.autor,
+  };
+
+  let boletinModificado: BoletinSemanal;
+
+  switch (op.tipo) {
+    case 'agregar_actividad': {
+      boletinModificado = {
+        ...baseActualizada,
+        dias: baseActualizada.dias.map((dia) => {
+          if (dia.id !== op.diaId) return dia;
+          if (dia.actividades.some((a) => a.id === op.actividad.id)) {
+            return dia;
+          }
+          return {
+            ...dia,
+            actividades: [...dia.actividades, { ...op.actividad, actualizadoPor: op.autor }],
+          };
+        }),
+      };
+      break;
+    }
+
+    case 'actualizar_actividad': {
+      boletinModificado = {
+        ...baseActualizada,
+        dias: baseActualizada.dias.map((dia) => {
+          if (dia.id !== op.diaId) return dia;
+          return {
+            ...dia,
+            actividades: dia.actividades.map((a) =>
+              a.id === op.actividad.id ? { ...op.actividad, actualizadoPor: op.autor } : a
+            ),
+          };
+        }),
+      };
+      break;
+    }
+
+    case 'eliminar_actividad': {
+      boletinModificado = {
+        ...baseActualizada,
+        dias: baseActualizada.dias.map((dia) => {
+          if (dia.id !== op.diaId) return dia;
+          return {
+            ...dia,
+            actividades: dia.actividades.filter((a) => a.id !== op.actividadId),
+          };
+        }),
+      };
+      break;
+    }
+
+    case 'alternar_festivo_dia': {
+      boletinModificado = {
+        ...baseActualizada,
+        dias: baseActualizada.dias.map((dia) =>
+          dia.id === op.diaId
+            ? {
+                ...dia,
+                esFestivo: op.esFestivo,
+                notaHorario: op.notaHorario !== undefined ? op.notaHorario : dia.notaHorario,
+              }
+            : dia
+        ),
+      };
+      break;
+    }
+
+    case 'agregar_evento_largo_plazo': {
+      if (baseActualizada.proyeccionCalendario.some((e) => e.id === op.evento.id)) {
+        return baseActualizada;
+      }
+      boletinModificado = {
+        ...baseActualizada,
+        proyeccionCalendario: [...baseActualizada.proyeccionCalendario, op.evento],
+      };
+      break;
+    }
+
+    case 'eliminar_evento_largo_plazo': {
+      boletinModificado = {
+        ...baseActualizada,
+        proyeccionCalendario: baseActualizada.proyeccionCalendario.filter(
+          (e) => e.id !== op.eventoId
+        ),
+      };
+      break;
+    }
+
+    case 'limpiar_eventos_largo_plazo': {
+      const anioCal = obtenerCalendarioOficialBoletin(baseActualizada).anio;
+      boletinModificado = {
+        ...baseActualizada,
+        proyeccionCalendario:
+          op.modo === 'solo_vencidos'
+            ? filtrarEventosLargoPlazoVigentes(
+                baseActualizada.proyeccionCalendario,
+                baseActualizada.dias,
+                baseActualizada.fechaEmision,
+                anioCal
+              )
+            : [],
+      };
+      break;
+    }
+
+    case 'agregar_felicitacion': {
+      if (baseActualizada.felicitaciones.some((f) => f.id === op.felicitacion.id)) {
+        return baseActualizada;
+      }
+      boletinModificado = {
+        ...baseActualizada,
+        felicitaciones: [...baseActualizada.felicitaciones, op.felicitacion],
+      };
+      break;
+    }
+
+    case 'eliminar_felicitacion': {
+      boletinModificado = {
+        ...baseActualizada,
+        felicitaciones: baseActualizada.felicitaciones.filter((f) => f.id !== op.felicitacionId),
+      };
+      break;
+    }
+
+    case 'limpiar_felicitaciones': {
+      boletinModificado = {
+        ...baseActualizada,
+        felicitaciones: [],
+      };
+      break;
+    }
+
+    case 'agregar_aviso_practica': {
+      boletinModificado = {
+        ...baseActualizada,
+        avisosPracticas: [...baseActualizada.avisosPracticas, op.aviso],
+      };
+      break;
+    }
+
+    case 'eliminar_aviso_practica': {
+      boletinModificado = {
+        ...baseActualizada,
+        avisosPracticas: baseActualizada.avisosPracticas.filter((_, idx) => idx !== op.indice),
+      };
+      break;
+    }
+
+    case 'limpiar_avisos_practicas': {
+      boletinModificado = {
+        ...baseActualizada,
+        avisosPracticas: [],
+      };
+      break;
+    }
+
+    case 'agregar_suspension': {
+      if (baseActualizada.suspensiones.some((s) => s.id === op.suspension.id)) {
+        return baseActualizada;
+      }
+      boletinModificado = {
+        ...baseActualizada,
+        suspensiones: [...baseActualizada.suspensiones, op.suspension],
+      };
+      break;
+    }
+
+    case 'eliminar_suspension': {
+      boletinModificado = {
+        ...baseActualizada,
+        suspensiones: baseActualizada.suspensiones.filter((s) => s.id !== op.suspensionId),
+      };
+      break;
+    }
+
+    case 'limpiar_suspensiones': {
+      boletinModificado = {
+        ...baseActualizada,
+        suspensiones: [],
+      };
+      break;
+    }
+
+    case 'actualizar_horario_apoyo': {
+      boletinModificado = {
+        ...baseActualizada,
+        horariosApoyo: baseActualizada.horariosApoyo.map((h) =>
+          h.id === op.horario.id ? op.horario : h
+        ),
+      };
+      break;
+    }
+
+    case 'agregar_documento': {
+      if (baseActualizada.documentosPermanentes.some((d) => d.id === op.documento.id)) {
+        return baseActualizada;
+      }
+      boletinModificado = {
+        ...baseActualizada,
+        documentosPermanentes: [...baseActualizada.documentosPermanentes, op.documento],
+      };
+      break;
+    }
+
+    case 'eliminar_documento': {
+      boletinModificado = {
+        ...baseActualizada,
+        documentosPermanentes: baseActualizada.documentosPermanentes.filter(
+          (d) => d.id !== op.documentoId
+        ),
+      };
+      break;
+    }
+
+    case 'actualizar_encabezado': {
+      boletinModificado = {
+        ...baseActualizada,
+        ...op.datos,
+      };
+      break;
+    }
+
+    case 'actualizar_poliza': {
+      boletinModificado = {
+        ...baseActualizada,
+        polizaEscolarDoc: op.poliza,
+      };
+      break;
+    }
+
+    case 'actualizar_calendario_anual': {
+      boletinModificado = {
+        ...baseActualizada,
+        calendarioOficial: {
+          ...op.calendario,
+          actualizadoEn: timestampIso,
+          actualizadoPor: op.autor,
+        },
+      };
+      break;
+    }
+
+    case 'actualizar_drive_pdf': {
+      boletinModificado = {
+        ...boletin,
+        drivePdfInfo: op.drivePdfInfo,
+      };
+      break;
+    }
+  }
+
+  const nowStr = new Date().toLocaleString('es-CO', {
+    timeZone: 'America/Bogota',
+    dateStyle: 'short',
+    timeStyle: 'medium',
+  });
+
+  let seccion = 'General';
+  let accion: string = op.tipo;
+  let descripcion = `Modificación realizada por ${op.autor}`;
+
+  switch (op.tipo) {
+    case 'agregar_actividad':
+      seccion = 'Programación Semanal';
+      accion = 'Agregar Actividad';
+      descripcion = `Se agregó la actividad "${op.actividad.titulo}" (${op.actividad.hora}).`;
+      break;
+    case 'actualizar_actividad':
+      seccion = 'Programación Semanal';
+      accion = 'Actualizar / Reprogramar';
+      descripcion = `Se actualizó la actividad "${op.actividad.titulo}" (${op.actividad.hora}).`;
+      break;
+    case 'eliminar_actividad':
+      seccion = 'Programación Semanal';
+      accion = 'Eliminar Actividad';
+      descripcion = `Se eliminó una actividad.`;
+      break;
+    case 'alternar_festivo_dia':
+      seccion = 'Programación Semanal';
+      accion = 'Cambiar Estado Festivo';
+      descripcion = `Se modificó el estado festivo del día ${op.diaId}.`;
+      break;
+    case 'agregar_evento_largo_plazo':
+      seccion = 'Calendario a Largo Plazo';
+      accion = 'Agregar Evento';
+      descripcion = `Se agregó el evento: "${op.evento.descripcion}".`;
+      break;
+    case 'eliminar_evento_largo_plazo':
+      seccion = 'Calendario a Largo Plazo';
+      accion = 'Eliminar Evento';
+      descripcion = `Se eliminó un evento del calendario a largo plazo.`;
+      break;
+    case 'limpiar_eventos_largo_plazo':
+      seccion = 'Calendario a Largo Plazo';
+      accion =
+        op.modo === 'solo_vencidos'
+          ? 'Depurar Actividades Vencidas'
+          : 'Limpiar Lista Completa';
+      descripcion =
+        op.modo === 'solo_vencidos'
+          ? `Se depuraron las actividades pasadas conservando ${boletinModificado.proyeccionCalendario.length} actividad(es) futura(s) vigente(s).`
+          : `Se vació la lista de actividades del cronograma a largo plazo.`;
+      break;
+    case 'agregar_felicitacion':
+      seccion = 'Noti-Prácticas';
+      accion = 'Agregar Felicitación';
+      descripcion = `Se agregó mención de honor.`;
+      break;
+    case 'eliminar_felicitacion':
+      seccion = 'Noti-Prácticas';
+      accion = 'Eliminar Felicitación';
+      descripcion = `Se eliminó una mención de honor.`;
+      break;
+    case 'limpiar_felicitaciones':
+      seccion = 'Noti-Prácticas';
+      accion = 'Limpiar Felicitaciones';
+      descripcion = `Se vació la lista de reconocimientos a docentes.`;
+      break;
+    case 'agregar_aviso_practica':
+      seccion = 'Noti-Prácticas';
+      accion = 'Agregar Recomendación';
+      descripcion = `Se añadió una directriz general.`;
+      break;
+    case 'eliminar_aviso_practica':
+      seccion = 'Noti-Prácticas';
+      accion = 'Eliminar Recomendación';
+      descripcion = `Se eliminó una directriz general.`;
+      break;
+    case 'limpiar_avisos_practicas':
+      seccion = 'Noti-Prácticas';
+      accion = 'Limpiar Recomendaciones';
+      descripcion = `Se vació la lista de avisos y directrices de Noti-Prácticas.`;
+      break;
+    case 'agregar_suspension':
+      seccion = 'Noti-Prácticas (Suspensiones)';
+      accion = 'Registrar Suspensión';
+      descripcion = `Se registró un nuevo reporte de suspensión.`;
+      break;
+    case 'eliminar_suspension':
+      seccion = 'Noti-Prácticas (Suspensiones)';
+      accion = 'Eliminar Suspensión';
+      descripcion = `Se eliminó un registro de suspensión.`;
+      break;
+    case 'limpiar_suspensiones':
+      seccion = 'Noti-Prácticas (Suspensiones)';
+      accion = 'Limpiar Suspensiones';
+      descripcion = `Se vació la tabla de próximas suspensiones de convivencia.`;
+      break;
+    case 'actualizar_horario_apoyo':
+      seccion = 'Horarios Personal de Apoyo';
+      accion = 'Actualizar Horario';
+      descripcion = `Se actualizó el horario de apoyo.`;
+      break;
+    case 'agregar_documento':
+      seccion = 'Documentos y Enlaces';
+      accion = 'Vincular Documento';
+      descripcion = `Se vinculó el documento "${op.documento.titulo}".`;
+      break;
+    case 'eliminar_documento':
+      seccion = 'Documentos y Enlaces';
+      accion = 'Eliminar Documento';
+      descripcion = `Se eliminó un documento vinculado.`;
+      break;
+    case 'actualizar_encabezado':
+      seccion = 'Encabezado / Configuración';
+      accion = 'Actualizar Encabezado';
+      descripcion = op.datos.frasePedagogica
+        ? `Se actualizó la reflexión pedagógica semanal.`
+        : `Se actualizaron datos generales del boletín N° ${op.datos.numero || boletin.numero}.`;
+      break;
+    case 'actualizar_poliza':
+      seccion = 'Documentos y Enlaces';
+      accion = 'Actualizar Póliza Escolar';
+      descripcion = `Se actualizó la póliza escolar oficial: "${op.poliza.titulo}".`;
+      break;
+    case 'actualizar_calendario_anual':
+      seccion = 'Calendario Académico Oficial';
+      accion = `Activar Calendario ${op.calendario.anio}`;
+      descripcion = `Se actualizó y activó el Calendario Académico Oficial del año ${op.calendario.anio} (${op.calendario.resolucionTexto}).`;
+      break;
+    case 'actualizar_drive_pdf':
+      seccion = 'Publicación en la Nube (Google Drive PDF)';
+      accion =
+        op.drivePdfInfo.version > 1
+          ? `Sobrescritura PDF (v${op.drivePdfInfo.version})`
+          : 'Creación PDF en Google Drive (v1)';
+      descripcion = `Se sincronizó el archivo oficial «${op.drivePdfInfo.fileName}» sobre el ID único de Google Drive (${op.drivePdfInfo.fileId}).`;
+      break;
+  }
+
+  const nuevoRegistro = {
+    id: `hist-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    timestamp: nowStr,
+    usuario: op.autor,
+    seccion,
+    accion,
+    descripcion,
+  };
+
+  return {
+    ...boletinModificado,
+    historialCambios: [nuevoRegistro, ...(boletin.historialCambios || [])],
+  };
+}
+
+/**
+ * Clona un boletín existente para generar la edición de la siguiente semana,
+ * aplicando las opciones preventivas de limpieza para secciones arrastradas y
+ * conservando únicamente las actividades futuras vigentes en el cronograma a largo plazo cuando se solicita.
+ */
+export function clonarBoletinSiguienteSemana(
+  actual: BoletinSemanal,
+  datosNuevaSemana: OpcionesClonarBoletin & { autor: string }
+): BoletinSemanal {
+  const nuevoNumero = actual.numero + 1;
+  const calendarioActivo = obtenerCalendarioOficialBoletin(actual);
+  const { diasNuevos, semanaTextoNuevo } = generarDiasSiguienteSemanaConFestivos(
+    actual.dias,
+    calendarioActivo
+  );
+  const textoSemanaFinal = datosNuevaSemana.semanaTexto?.trim()
+    ? formatearRangoSemanaSegunMeses([], datosNuevaSemana.semanaTexto)
+    : semanaTextoNuevo;
+
+  const diasConstruidos = actual.dias.map((dia, index) => {
+    const metaDia = diasNuevos[index];
+    return {
+      ...dia,
+      fechaTexto: metaDia ? metaDia.fechaTexto : dia.fechaTexto,
+      esFestivo: metaDia ? metaDia.esFestivo : false,
+      notaHorario: metaDia ? metaDia.notaHorario : undefined,
+      incluirDocumentosBase: index === 0,
+      actividades: datosNuevaSemana.conservarActividades
+        ? dia.actividades.map((a) => ({
+            ...a,
+            id: `${a.id}-n${nuevoNumero}`,
+            reprogramada: false,
+            notaReprogramacion: undefined,
+          }))
+        : [],
+    };
+  });
+
+  const modoLP = datosNuevaSemana.modoEventosLargoPlazo || 'futuras';
+  const proyeccionFiltrada =
+    modoLP === 'ninguna'
+      ? []
+      : modoLP === 'todas'
+        ? actual.proyeccionCalendario
+        : filtrarEventosLargoPlazoVigentes(
+            actual.proyeccionCalendario,
+            diasConstruidos,
+            datosNuevaSemana.fechaEmision,
+            calendarioActivo.anio
+          );
+
+  const conservarFel =
+    datosNuevaSemana.conservarFelicitaciones !== undefined
+      ? datosNuevaSemana.conservarFelicitaciones
+      : true;
+  const conservarSusp =
+    datosNuevaSemana.conservarSuspensiones !== undefined
+      ? datosNuevaSemana.conservarSuspensiones
+      : true;
+  const conservarAvisos =
+    datosNuevaSemana.conservarAvisosPracticas !== undefined
+      ? datosNuevaSemana.conservarAvisosPracticas
+      : true;
+
+  return {
+    ...actual,
+    id: `notiprofes-${calendarioActivo.anio}-${nuevoNumero}`,
+    numero: nuevoNumero,
+    fechaEmision: datosNuevaSemana.fechaEmision,
+    semanaTexto: textoSemanaFinal,
+    descripcionPeriodo: datosNuevaSemana.descripcionPeriodo || actual.descripcionPeriodo,
+    ultimaActualizacion: new Date().toISOString(),
+    actualizadoPor: datosNuevaSemana.autor,
+    drivePdfInfo: undefined,
+    dias: diasConstruidos,
+    proyeccionCalendario: proyeccionFiltrada,
+    felicitaciones: conservarFel ? actual.felicitaciones : [],
+    suspensiones: conservarSusp ? actual.suspensiones : [],
+    avisosPracticas: conservarAvisos ? actual.avisosPracticas : [],
+  };
+}
+
+function escaparHtml(texto: string): string {
+  return texto
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+/**
+ * Calcula las iniciales de 2 letras a partir del nombre del responsable o dependencia.
+ */
+export function obtenerInicialesResponsable(responsable: string): string {
+  const limpio = responsable
+    .replace(/[^\p{L}\s]/gu, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter((p) => p.length > 1 && !['de', 'del', 'la', 'las', 'el', 'los', 'y', 'a'].includes(p.toLowerCase()));
+
+  if (limpio.length === 0) return 'VF';
+  if (limpio.length === 1) return limpio[0].slice(0, 2).toUpperCase();
+  return `${limpio[0][0]}${limpio[1][0]}`.toUpperCase();
+}
+
+/**
+ * Genera un documento HTML público autónomo, corporativo y auto-actualizable
+ * con el logo oficial, la paleta cromática de la I.E. Villa Flora (#007DC5, #034EA2, #ED145B, #231F20, #939598)
+ * y la jerarquía tipográfica Outfit + Plus Jakarta Sans + IBM Plex Mono.
+ */
+export function generarHtmlPublicoBoletin(boletin: BoletinSemanal): string {
+  const rutaLogoOficial = '/public/assets/aistudio/logo_html_859fb25c.png';
+  const nombreArchivoPdf = `Boletin_Oficial_N${boletin.numero}_IE_Villa_Flora.pdf`;
+
+  const totalActividades = boletin.dias.reduce((acc, d) => acc + d.actividades.length, 0);
+  const totalReprogramadas = boletin.dias.reduce(
+    (acc, d) => acc + d.actividades.filter((a) => a.reprogramada).length,
+    0
+  );
+  const maxActividadesDia = Math.max(1, ...boletin.dias.map((d) => d.actividades.length));
+
+  const barrasDiasHtml = boletin.dias
+    .map((dia) => {
+      const nombreCorto = dia.fechaTexto.split(' ')[0];
+      const cant = dia.actividades.length;
+      const porcentaje = dia.esFestivo
+        ? 100
+        : Math.max(14, Math.round((cant / maxActividadesDia) * 100));
+      const claseBarra = dia.esFestivo
+        ? 'barra-fill festivo'
+        : cant >= 3
+          ? 'barra-fill alta'
+          : 'barra-fill normal';
+
+      return `
+      <div class="dia-stat">
+        <div class="dia-stat-top">
+          <span class="dia-stat-name">${escaparHtml(nombreCorto)}</span>
+          <span class="dia-stat-count">${dia.esFestivo ? 'FESTIVO' : `${cant} act.`}</span>
+        </div>
+        <div class="barra-track">
+          <div class="${claseBarra}" style="width: ${porcentaje}%"></div>
+        </div>
+      </div>`;
+    })
+    .join('');
+
+  const tarjetasDocsHtml = boletin.documentosPermanentes
+    .map((doc) => {
+      const esLink = doc.tipo === 'link';
+      const ext = esLink ? 'LINK' : doc.tipo.toUpperCase();
+      const colorBadge =
+        doc.tipo === 'xlsx'
+          ? '#059669'
+          : doc.tipo === 'pdf'
+            ? '#ED145B'
+            : doc.tipo === 'link'
+              ? '#007DC5'
+              : '#034EA2';
+      const labelPie = esLink ? 'Enlace web / URL' : 'Archivo institucional';
+      return `
+      <a class="doc-card" href="${escaparHtml(doc.url)}" target="_blank" rel="noopener noreferrer">
+        <div class="doc-card-head">
+          <span class="doc-cat">${escaparHtml(doc.categoria)}</span>
+          <span class="doc-badge" style="background: ${colorBadge}15; color: ${colorBadge}; border: 1px solid ${colorBadge}40;">${escaparHtml(ext)}</span>
+        </div>
+        <div class="doc-title">${escaparHtml(doc.titulo)}</div>
+        <div class="doc-footer">
+          <span>${labelPie}</span>
+          <span class="doc-cta">Abrir recurso →</span>
+        </div>
+      </a>`;
+    })
+    .join('');
+
+  // Detectar el día presente / actual (Lunes a Viernes) para destacarlo en el HTML público
+  const hoyFecha = new Date();
+  const diaMesHoy = hoyFecha.getDate();
+  const mesesNombres = [
+    'ENERO',
+    'FEBRERO',
+    'MARZO',
+    'ABRIL',
+    'MAYO',
+    'JUNIO',
+    'JULIO',
+    'AGOSTO',
+    'SEPTIEMBRE',
+    'OCTUBRE',
+    'NOVIEMBRE',
+    'DICIEMBRE',
+  ];
+  const mesActualNombre = mesesNombres[hoyFecha.getMonth()];
+  const diaSemanaNum = hoyFecha.getDay();
+  const mapaPrefijosDias: Record<number, string> = {
+    1: 'LUN',
+    2: 'MAR',
+    3: 'MI',
+    4: 'JUE',
+    5: 'VIE',
+  };
+  const prefijoDiaHoy = mapaPrefijosDias[diaSemanaNum];
+
+  const diaPresenteEnBoletin =
+    boletin.dias.find((d) => {
+      const txt = d.fechaTexto.toUpperCase();
+      const regexDia = new RegExp(`\\b0?${diaMesHoy}\\b`);
+      return regexDia.test(txt) && txt.includes(mesActualNombre);
+    }) ||
+    (prefijoDiaHoy
+      ? boletin.dias.find((d) => d.fechaTexto.toUpperCase().startsWith(prefijoDiaHoy))
+      : null) ||
+    boletin.dias[0];
+
+  const idDiaPresente = diaPresenteEnBoletin?.id || null;
+
+  const tarjetasDiasGraficasHtml = boletin.dias
+    .map((dia, idx) => {
+      const esHoy = dia.id === idDiaPresente;
+
+      if (dia.esFestivo && dia.actividades.length === 0) {
+        return `
+        <div class="day-card ${esHoy ? 'day-card-hoy' : ''}">
+          <div class="day-card-header ${esHoy ? 'day-header-hoy' : ''}">
+            <div class="day-title-wrap">
+              <span class="day-count-badge">${idx + 1}</span>
+              <h4>${escaparHtml(dia.fechaTexto)}</h4>
+              <span class="day-pill-festivo">JORNADA FESTIVA</span>
+              ${esHoy ? `<span class="day-badge-hoy">🔥 HOY · DÍA EN CURSO</span>` : ''}
+            </div>
+            <span class="day-meta">${escaparHtml(dia.notaHorario || 'DÍA FESTIVO OFICIAL')}</span>
+          </div>
+          <div class="day-empty">
+            Jornada festiva nacional — Sin actividades académicas presenciales programadas.
+          </div>
+        </div>`;
+      }
+
+      const itemsActHtml =
+        dia.actividades.length === 0
+          ? `<div class="day-empty">Sin actividades extraordinarias registradas para esta jornada.</div>`
+          : `<div class="timeline-list">
+              ${dia.actividades
+                .map(
+                  (act) => `
+                <div class="timeline-item ${act.reprogramada ? 'reprogramado' : ''}">
+                  <div class="timeline-time">
+                    <span class="time-chip">${escaparHtml(act.hora)}</span>
+                  </div>
+                  <div class="timeline-content">
+                    <div class="act-titulo">${formatearTextoAHtmlSeguro(act.titulo)}</div>
+                    ${
+                      act.reprogramada && act.notaReprogramacion
+                        ? `<div class="marca-reprogramada"><span style="margin-right: 4px;">⚠️</span>${escaparHtml(act.notaReprogramacion)}</div>`
+                        : ''
+                    }
+                    <div class="act-meta-row">
+                      <span class="meta-item">
+                        <svg class="ico-meta ico-resp" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                        <strong>Responsable:</strong> ${escaparHtml(act.responsable)}
+                      </span>
+                      <span class="sep">·</span>
+                      <span class="meta-item">
+                        <svg class="ico-meta ico-lugar" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+                        <strong>Lugar:</strong> ${escaparHtml(act.lugar)}
+                      </span>
+                    </div>
+                  </div>
+                </div>`
+                )
+                .join('')}
+            </div>`;
+
+      return `
+      <div class="day-card ${esHoy ? 'day-card-hoy' : ''}">
+        <div class="day-card-header ${esHoy ? 'day-header-hoy' : ''}">
+          <div class="day-title-wrap">
+            <span class="day-count-badge">${idx + 1}</span>
+            <h4>${escaparHtml(dia.fechaTexto)}</h4>
+            ${esHoy ? `<span class="day-badge-hoy">🔥 HOY · DÍA EN CURSO</span>` : ''}
+            ${dia.notaHorario ? `<span class="day-horario-tag">${escaparHtml(dia.notaHorario)}</span>` : ''}
+          </div>
+          <span class="day-meta">${dia.actividades.length} actividad(es)</span>
+        </div>
+        ${itemsActHtml}
+      </div>`;
+    })
+    .join('\n');
+
+  const filasDiasTablaHtml = boletin.dias
+    .map((dia) => {
+      const esHoy = dia.id === idDiaPresente;
+
+      if (dia.esFestivo && dia.actividades.length === 0) {
+        return `
+        <tr class="fila-festivo ${esHoy ? 'fila-hoy' : ''}">
+          <td class="col-fecha ${esHoy ? 'col-fecha-hoy' : ''}">
+            <div class="dia-nombre">
+              ${escaparHtml(dia.fechaTexto)}
+              ${esHoy ? `<span class="badge-tabla-hoy">HOY</span>` : ''}
+            </div>
+          </td>
+          <td colspan="4" class="col-festivo">
+            <strong>${escaparHtml(dia.notaHorario || 'DÍA FESTIVO')}</strong>
+          </td>
+        </tr>`;
+      }
+
+      if (dia.actividades.length === 0) {
+        return `
+        <tr class="${esHoy ? 'fila-hoy' : ''}">
+          <td class="col-fecha ${esHoy ? 'col-fecha-hoy' : ''}">
+            <div class="dia-nombre">
+              ${escaparHtml(dia.fechaTexto)}
+              ${esHoy ? `<span class="badge-tabla-hoy">HOY</span>` : ''}
+            </div>
+            ${dia.notaHorario ? `<div class="dia-nota">${escaparHtml(dia.notaHorario)}</div>` : ''}
+          </td>
+          <td class="col-act"><em>Sin actividades adicionales registradas</em></td>
+          <td class="col-resp">-</td>
+          <td class="col-hora">-</td>
+          <td class="col-lugar">-</td>
+        </tr>`;
+      }
+
+      return dia.actividades
+        .map((act: ActividadProgramada, idx: number) => {
+          const celdaFecha =
+            idx === 0
+              ? `<td class="col-fecha ${esHoy ? 'col-fecha-hoy' : ''}" rowspan="${dia.actividades.length}">
+                  <div class="dia-nombre">
+                    ${escaparHtml(dia.fechaTexto)}
+                    ${esHoy ? `<span class="badge-tabla-hoy">HOY</span>` : ''}
+                  </div>
+                  ${
+                    dia.notaHorario
+                      ? `<div class="dia-nota">${escaparHtml(dia.notaHorario)}</div>`
+                      : ''
+                  }
+                </td>`
+              : '';
+
+          const badgeReprogramada =
+            act.reprogramada && act.notaReprogramacion
+              ? `<div class="marca-reprogramada"><span style="margin-right: 4px;">⚠️</span>${escaparHtml(act.notaReprogramacion)}</div>`
+              : '';
+
+          return `
+          <tr class="${act.reprogramada ? 'fila-reprogramada' : ''} ${esHoy ? 'fila-hoy' : ''}">
+            ${celdaFecha}
+            <td class="col-act">
+              <div class="act-titulo">${formatearTextoAHtmlSeguro(act.titulo)}</div>
+              ${badgeReprogramada}
+            </td>
+            <td class="col-resp">${escaparHtml(act.responsable)}</td>
+            <td class="col-hora">${escaparHtml(act.hora)}</td>
+            <td class="col-lugar">${escaparHtml(act.lugar)}</td>
+          </tr>`;
+        })
+        .join('\n');
+    })
+    .join('\n');
+
+  const finalizacionItems = boletin.proyeccionCalendario.filter(
+    (e) => e.categoria === 'finalizacion'
+  );
+  const proximasItems = boletin.proyeccionCalendario.filter(
+    (e) => e.categoria !== 'finalizacion'
+  );
+  const estadoCalendario = calcularEstadoCalendarioBoletin(boletin);
+  const calendarioActivo = obtenerCalendarioOficialBoletin(boletin);
+  const regexAnioLimpiar = new RegExp(`\\s+de\\s+${calendarioActivo.anio}`, 'gi');
+
+  const renderBloquesCalendarioHtml = (
+    bloques: typeof calendarioActivo.semanasLectivas,
+    colorTexto: string
+  ) =>
+    bloques
+      .map(
+        (b) => `
+        <div class="cal-item">
+          <span>${escaparHtml(b.desdeTexto.replace(regexAnioLimpiar, ''))} al ${escaparHtml(
+            b.hastaTexto.replace(regexAnioLimpiar, '')
+          )}</span>
+          <strong style="color: ${colorTexto}; flex-shrink: 0;">${b.semanas} sem.</strong>
+        </div>`
+      )
+      .join('');
+
+  const festivosGridHtml = calendarioActivo.festivos.map((fest) => {
+    const esDeEstaSemana = estadoCalendario.festivosSemana.some(
+      (f) => f.fecha === fest.fecha
+    );
+    return `
+      <div class="festivo-card ${esDeEstaSemana ? 'festivo-activo' : ''}">
+        <div class="festivo-top">
+          <span class="festivo-dia">${escaparHtml(fest.diaSemana.slice(0, 3))} ${escaparHtml(
+            fest.diaMesTexto
+          )}</span>
+          ${esDeEstaSemana ? '<span class="festivo-tag-hoy">Esta sem.</span>' : ''}
+        </div>
+        <div class="festivo-nombre">${escaparHtml(fest.nombre)}</div>
+      </div>`;
+  }).join('');
+
+  const seccionSuspensionesHtml =
+    boletin.mostrarSuspensionesPublico && boletin.suspensiones.length > 0
+      ? `
+      <div class="seccion-bloque">
+        <div class="sec-head">
+          <h3 class="subtitulo-seccion">Control de Próximas Suspensiones</h3>
+          <span class="sec-counter">${boletin.suspensiones.length} estudiante(s)</span>
+        </div>
+        <table class="tabla-moderna">
+          <thead>
+            <tr>
+              <th style="width: 15%">Grado</th>
+              <th style="width: 50%">Nombres y apellidos</th>
+              <th style="width: 35%">Fecha de suspensión</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${boletin.suspensiones
+              .map(
+                (s) => `
+              <tr>
+                <td class="mono"><strong>${escaparHtml(s.grado)}</strong></td>
+                <td>${escaparHtml(s.estudiante)}</td>
+                <td class="mono">${escaparHtml(s.fechaSuspension)}</td>
+              </tr>`
+              )
+              .join('')}
+          </tbody>
+        </table>
+      </div>`
+      : '';
+
+  return `<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/png" href="/public/favicon.png" />
+  <link rel="apple-touch-icon" href="/public/favicon.png" />
+  <title>NOTIPROFES N° ${boletin.numero} - I.E. Villa Flora</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --vf-blue-bright: #007DC5;
+      --vf-blue-deep: #034EA2;
+      --vf-magenta: #ED145B;
+      --vf-dark: #0F172A;
+      --vf-gray: #939598;
+      --font-sans: 'Inter', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: var(--font-sans);
+      color: var(--vf-dark);
+      background: #EEF3F9;
+      margin: 0;
+      padding: 24px 16px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+    .contenedor {
+      max-width: 1120px;
+      margin: 0 auto;
+      background: #ffffff;
+      border-radius: 16px;
+      border: 1px solid #dbe4f0;
+      box-shadow: 0 16px 40px -12px rgba(3, 78, 162, 0.12);
+      position: relative;
+    }
+    .franja-corporativa {
+      height: 6px;
+      background: linear-gradient(90deg, #034EA2 0%, #007DC5 65%, #ED145B 100%);
+      border-top-left-radius: 16px;
+      border-top-right-radius: 16px;
+    }
+    .barra-superior {
+      background: var(--vf-dark);
+      color: #f8fafc;
+      padding: 12px 32px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      font-size: 12px;
+    }
+    .acciones-top {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .btn-modo {
+      background: rgba(255,255,255,0.1);
+      color: #ffffff;
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-family: var(--font-sans);
+      font-size: 11.5px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .btn-modo.activo {
+      background: var(--vf-blue-bright);
+      border-color: var(--vf-blue-bright);
+    }
+    .btn-imprimir {
+      background: var(--vf-magenta);
+      color: #ffffff;
+      border: none;
+      border-radius: 6px;
+      padding: 7px 14px;
+      font-family: var(--font-sans);
+      font-size: 12px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .hero-institucional {
+      background: linear-gradient(135deg, #022c5e 0%, #034EA2 52%, #007DC5 100%);
+      color: #ffffff;
+      padding: 18px 28px;
+    }
+    .hero-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .logo-card {
+      background: transparent;
+      padding: 0;
+      border-radius: 0;
+      display: inline-flex;
+      align-items: center;
+      box-shadow: none;
+    }
+    .logo-card img {
+      height: 88px;
+      width: auto;
+      max-width: 100%;
+      display: block;
+      filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.25));
+    }
+    .meta-edicion {
+      text-align: right;
+      font-family: var(--font-sans);
+      font-variant-numeric: tabular-nums;
+      font-size: 12px;
+      font-weight: 500;
+      color: #e0f2fe;
+    }
+    .badge-edicion {
+      display: inline-block;
+      background: var(--vf-magenta);
+      color: #ffffff;
+      font-family: 'Plus Jakarta Sans', 'Outfit', sans-serif;
+      font-weight: 800;
+      font-size: 20px;
+      padding: 6px 18px;
+      border-radius: 8px;
+      margin-bottom: 6px;
+      letter-spacing: 0.03em;
+      box-shadow: 0 4px 12px rgba(237, 20, 91, 0.35);
+    }
+    .hero-grid {
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255,255,255,0.18);
+      display: grid;
+      grid-template-columns: 2.1fr 1fr;
+      gap: 16px;
+      align-items: center;
+    }
+    @media (max-width: 820px) {
+      .hero-grid { grid-template-columns: 1fr; }
+    }
+    .hero-semana, .cita-box, .cita-texto, .cita-autor {
+      overflow-wrap: break-word;
+      word-break: break-word;
+      max-width: 100%;
+    }
+    .hero-semana h1 {
+      font-family: 'Plus Jakarta Sans', 'Outfit', sans-serif;
+      font-size: 17px;
+      font-weight: 800;
+      margin: 0 0 4px 0;
+      line-height: 1.25;
+      letter-spacing: -0.015em;
+      overflow-wrap: break-word;
+      word-break: break-word;
+    }
+    @media (min-width: 640px) {
+      .hero-semana h1 {
+        font-size: 22px;
+        white-space: nowrap;
+      }
+    }
+    .cita-box {
+      background: transparent;
+      border: none;
+      padding: 4px 8px;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .cita-bg-quote-open {
+      position: absolute;
+      top: -18px;
+      left: -4px;
+      font-size: 58px;
+      font-family: 'Arial Black', sans-serif;
+      font-weight: 900;
+      color: rgba(255, 255, 255, 0.15);
+      line-height: 1;
+      pointer-events: none;
+      user-select: none;
+      z-index: 0;
+    }
+    .cita-bg-quote-close {
+      position: absolute;
+      bottom: -18px;
+      right: -2px;
+      font-size: 58px;
+      font-family: 'Arial Black', sans-serif;
+      font-weight: 900;
+      color: rgba(255, 255, 255, 0.15);
+      line-height: 1;
+      pointer-events: none;
+      user-select: none;
+      z-index: 0;
+    }
+    .cita-kicker {
+      font-family: var(--font-sans);
+      font-size: 10px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #bae6fd;
+      margin-bottom: 3px;
+      position: relative;
+      z-index: 1;
+    }
+    .cita-texto {
+      font-size: 11px;
+      font-style: italic;
+      color: rgba(255, 255, 255, 0.95);
+      line-height: 1.35;
+      position: relative;
+      z-index: 1;
+      padding: 0 4px;
+    }
+    .cita-autor {
+      margin-top: 4px;
+      font-size: 10.5px;
+      font-weight: 700;
+      color: #e0f2fe;
+      text-align: right;
+      position: relative;
+      z-index: 1;
+    }
+    .kpi-ribbon {
+      background: #f8fafc;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 20px 36px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+    }
+    .kpi-card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .kpi-label {
+      font-size: 11.5px;
+      color: #64748b;
+      font-weight: 600;
+    }
+    .kpi-val {
+      font-family: 'Plus Jakarta Sans', 'Outfit', sans-serif;
+      font-variant-numeric: tabular-nums;
+      font-size: 24px;
+      font-weight: 800;
+      color: var(--vf-blue-deep);
+      margin-top: 2px;
+    }
+    .kpi-val.magenta { color: var(--vf-magenta); }
+    .carga-semanal-box {
+      background: #ffffff;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 16px 36px;
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 14px;
+    }
+    @media (max-width: 720px) {
+      .carga-semanal-box { grid-template-columns: repeat(2, 1fr); }
+    }
+    .dia-stat {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 8px 12px;
+    }
+    .dia-stat-top {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .dia-stat-name { color: var(--vf-dark); }
+    .dia-stat-count { font-family: var(--font-sans); font-variant-numeric: tabular-nums; font-weight: 700; color: var(--vf-blue-bright); }
+    .barra-track {
+      height: 6px;
+      background: #e2e8f0;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .barra-fill { height: 100%; border-radius: 999px; }
+    .barra-fill.normal { background: var(--vf-blue-bright); }
+    .barra-fill.alta { background: var(--vf-blue-deep); }
+    .barra-fill.festivo { background: var(--vf-magenta); }
+    .cuerpo {
+      padding: 32px 36px;
+    }
+    .seccion-bloque {
+      margin-bottom: 36px;
+    }
+    .sec-head {
+      background: linear-gradient(135deg, #0F223D 0%, #034EA2 100%);
+      color: #ffffff;
+      padding: 14px 22px;
+      border-radius: 12px;
+      margin-bottom: 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      box-shadow: 0 4px 12px rgba(15, 34, 61, 0.2);
+    }
+    .subtitulo-seccion {
+      font-family: 'Plus Jakarta Sans', 'Outfit', sans-serif;
+      font-size: 16px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      color: #ffffff !important;
+      margin: 0;
+    }
+    .sec-counter {
+      background: rgba(255, 255, 255, 0.18);
+      color: #ffffff;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 11.5px;
+      font-weight: 700;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+    }
+    .docs-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(235px, 1fr));
+      gap: 12px;
+    }
+    .doc-card {
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 14px 16px;
+      background: #ffffff;
+      border: 1px solid #dbe4f0;
+      border-radius: 10px;
+      text-decoration: none;
+      color: var(--vf-dark);
+      transition: border-color 0.15s ease, transform 0.15s ease;
+    }
+    .doc-card:hover {
+      border-color: var(--vf-blue-bright);
+      transform: translateY(-1px);
+    }
+    .doc-card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+    .doc-cat { font-size: 11px; color: #64748b; font-weight: 600; }
+    .doc-badge {
+      font-family: var(--font-sans);
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .doc-title { font-size: 13.5px; font-weight: 700; color: var(--vf-dark); margin-bottom: 10px; }
+    .doc-footer {
+      padding-top: 8px;
+      border-top: 1px solid #f1f5f9;
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      color: #64748b;
+    }
+    .doc-cta { color: var(--vf-blue-bright); font-weight: 700; }
+    .days-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+    .day-card {
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      overflow: hidden;
+      background: #ffffff;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05);
+      transition: all 0.2s ease;
+    }
+    .day-card.day-card-hoy {
+      border: 2px solid #007DC5;
+      box-shadow: 0 4px 20px rgba(0, 125, 197, 0.22);
+    }
+    .day-card-header {
+      background: linear-gradient(135deg, #034EA2 0%, #007DC5 100%);
+      color: #ffffff;
+      padding: 12px 18px;
+      border-bottom: 1px solid #0284c7;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .day-card-header.day-header-hoy {
+      background: linear-gradient(135deg, #0F223D 0%, #034EA2 100%);
+      border-bottom: 3px solid #ED145B;
+    }
+    .day-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .day-title-wrap h4 {
+      margin: 0;
+      font-family: 'Plus Jakarta Sans', 'Outfit', sans-serif;
+      font-size: 15px;
+      font-weight: 800;
+      color: #ffffff !important;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+    }
+    .day-card-header.festivo-header {
+      background: linear-gradient(135deg, #022c5e 0%, #034EA2 60%, #007DC5 100%);
+      border-bottom: 2.5px solid #ED145B;
+    }
+    .day-count-badge.festivo {
+      background: #ED145B;
+      color: #ffffff;
+    }
+    .day-count-badge {
+      background: #ffffff;
+      color: #034EA2;
+      font-family: var(--font-sans);
+      font-variant-numeric: tabular-nums;
+      font-size: 12px;
+      font-weight: 800;
+      width: 26px;
+      height: 26px;
+      border-radius: 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+    }
+    .tabla-apoyo-container {
+      width: 100%;
+      overflow-x: auto;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+    }
+    .tabla-apoyo-container table {
+      min-width: 660px;
+      margin: 0;
+      border: none;
+    }
+    .cards-apoyo-movil {
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .card-apoyo-item {
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .card-apoyo-head {
+      border-bottom: 1px solid #e2e8f0;
+      padding-bottom: 8px;
+      margin-bottom: 10px;
+    }
+    .card-apoyo-badge {
+      background: #034EA2;
+      color: #ffffff;
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 4px;
+      display: inline-block;
+      margin-bottom: 4px;
+    }
+    .card-apoyo-nombre {
+      font-size: 14px;
+      font-weight: 800;
+      color: #0f172a;
+    }
+    .card-apoyo-days {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .day-row-movil {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 12px;
+    }
+    .day-row-movil span {
+      font-weight: 700;
+      color: #034EA2;
+    }
+    .day-row-movil strong {
+      font-family: var(--font-sans);
+      font-variant-numeric: tabular-nums;
+      color: #334155;
+    }
+    @media (max-width: 640px) {
+      .cards-apoyo-movil { display: flex; }
+      .tabla-apoyo-desktop { display: none; }
+    }
+    .day-badge-hoy {
+      background: #ED145B;
+      color: #ffffff;
+      font-family: var(--font-sans);
+      font-size: 11px;
+      font-weight: 800;
+      padding: 3px 10px;
+      border-radius: 20px;
+      letter-spacing: 0.03em;
+      box-shadow: 0 2px 6px rgba(237, 20, 91, 0.4);
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .day-pill-festivo {
+      background: #ED145B;
+      color: #ffffff;
+      font-family: var(--font-sans);
+      font-size: 10.5px;
+      font-weight: 800;
+      padding: 3px 8px;
+      border-radius: 4px;
+    }
+    .day-horario-tag {
+      background: rgba(255, 255, 255, 0.2);
+      color: #ffffff;
+      font-size: 11.5px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.3);
+    }
+    .day-meta {
+      font-family: var(--font-sans);
+      font-variant-numeric: tabular-nums;
+      font-size: 12px;
+      font-weight: 700;
+      color: #f0f9ff;
+    }
+    .fila-hoy td {
+      background: #eff6ff !important;
+    }
+    .col-fecha-hoy {
+      background: #dbeafe !important;
+      border-left: 5px solid #034EA2 !important;
+    }
+    .col-fecha-hoy .dia-nombre {
+      color: #034EA2 !important;
+      font-weight: 800 !important;
+    }
+    .badge-tabla-hoy {
+      background: #034EA2;
+      color: #ffffff;
+      font-size: 9.5px;
+      font-weight: 800;
+      padding: 2px 6px;
+      border-radius: 4px;
+      margin-left: 6px;
+      vertical-align: middle;
+      display: inline-block;
+    }
+    .day-empty {
+      padding: 18px;
+      font-size: 13px;
+      color: #64748b;
+      font-style: italic;
+    }
+    .timeline-item {
+      padding: 14px 18px;
+      border-bottom: 1px solid #f1f5f9;
+      display: grid;
+      grid-template-columns: 170px 1fr;
+      gap: 16px;
+      align-items: start;
+      background: #ffffff;
+    }
+    .timeline-item:nth-child(even) {
+      background: #f8fafc;
+    }
+    .timeline-item:last-child { border-bottom: none; }
+    @media (max-width: 640px) {
+      .timeline-item { grid-template-columns: 1fr; gap: 6px; }
+    }
+    .time-chip {
+      display: inline-block;
+      font-family: var(--font-sans);
+      font-variant-numeric: tabular-nums;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--vf-blue-deep);
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      padding: 4px 10px;
+      border-radius: 6px;
+    }
+    .act-meta-row {
+      margin-top: 6px;
+      font-size: 12px;
+      color: #475569;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+    }
+    .meta-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .ico-meta {
+      display: inline-block;
+      vertical-align: middle;
+      flex-shrink: 0;
+    }
+    .ico-resp {
+      color: #034EA2;
+    }
+    .ico-lugar {
+      color: #007DC5;
+    }
+    .sep { color: #cbd5e1; }
+    .tabla-moderna {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      border: 1px solid #cbd5e1;
+    }
+    .tabla-moderna th {
+      background: #f8fafc;
+      color: var(--vf-blue-deep);
+      font-family: 'Plus Jakarta Sans', 'Outfit', sans-serif;
+      font-weight: 700;
+      text-align: left;
+      padding: 10px 12px;
+      border: 1px solid #cbd5e1;
+      font-size: 11.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+    }
+    .tabla-moderna td {
+      padding: 10px 12px;
+      border: 1px solid #cbd5e1;
+      vertical-align: top;
+      background: #ffffff;
+    }
+    .tabla-moderna tbody tr:nth-child(even) td:not(.col-fecha) {
+      background: #f8fafc;
+    }
+    .col-fecha { width: 17%; background: #f8fafc; }
+    .dia-nombre { font-weight: 700; color: var(--vf-dark); font-size: 12.5px; }
+    .dia-nota { font-size: 11px; color: var(--vf-blue-bright); font-weight: 700; margin-top: 4px; }
+    .col-act { width: 41%; }
+    .act-titulo { font-weight: 700; color: var(--vf-dark); font-size: 13.5px; line-height: 1.35; }
+    .col-resp { width: 18%; color: #334155; font-weight: 500; }
+    .col-hora { width: 12%; font-family: var(--font-sans); font-variant-numeric: tabular-nums; font-size: 12.5px; font-weight: 600; color: var(--vf-dark); }
+    .col-lugar { width: 12%; color: #64748b; font-weight: 500; }
+    .fila-festivo td { background: #fff1f2; color: var(--vf-magenta); }
+    .timeline-item.reprogramado {
+      background: #fffbeb !important;
+      border-left: 5px solid #d97706 !important;
+    }
+    .marca-reprogramada {
+      display: inline-block;
+      margin-top: 5px;
+      background: #fef3c7;
+      color: #78350f;
+      border: 1px solid #fde68a;
+      font-weight: 700;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 5px;
+    }
+    .fila-reprogramada td:not(.col-fecha) {
+      background: #fffbeb !important;
+    }
+    .fila-reprogramada td.col-act {
+      border-left: 4px solid #d97706 !important;
+    }
+    .banner-notipracticas {
+      background: linear-gradient(90deg, #034EA2 0%, #007DC5 100%);
+      color: #ffffff;
+      padding: 16px 24px;
+      border-radius: 10px;
+      margin: 32px 0 20px;
+      font-family: 'Plus Jakarta Sans', 'Outfit', sans-serif;
+      font-size: 17px;
+      font-weight: 800;
+      letter-spacing: 0.05em;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      text-transform: uppercase;
+    }
+    .fel-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 12px;
+    }
+    .fel-card {
+      background: #f8fafc;
+      border: 1px solid #dbe4f0;
+      border-radius: 10px;
+      padding: 14px 16px;
+    }
+    .fel-name { font-weight: 800; color: var(--vf-blue-deep); font-size: 13.5px; margin-bottom: 4px; }
+    .fel-desc { font-size: 12.5px; color: #334155; }
+    .pasos-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 12px 0;
+    }
+    .paso-card {
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12.5px;
+      font-weight: 600;
+    }
+    .paso-num {
+      background: var(--vf-magenta);
+      color: #ffffff;
+      font-family: var(--font-sans);
+      font-variant-numeric: tabular-nums;
+      font-weight: 700;
+      width: 26px;
+      height: 26px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .lista-items {
+      margin: 0;
+      padding-left: 20px;
+      font-size: 13.5px;
+    }
+    .lista-items li { margin-bottom: 6px; }
+    .mono { font-family: var(--font-sans); font-variant-numeric: tabular-nums; font-weight: 500; }
+    .firmas-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+      margin-top: 44px;
+      padding-top: 24px;
+      border-top: 1px solid #e2e8f0;
+      text-align: center;
+      font-size: 12.5px;
+    }
+    .oculto { display: none !important; }
+    .calendario-details {
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      border-radius: 12px;
+      overflow: hidden;
+      margin-bottom: 28px;
+      box-shadow: 0 2px 6px rgba(15, 23, 42, 0.03);
+    }
+    .calendario-summary {
+      list-style: none;
+      cursor: pointer;
+      padding: 16px 20px;
+      background: linear-gradient(90deg, #0F223D 0%, #034EA2 50%, #007DC5 100%);
+      color: #ffffff;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      user-select: none;
+      border-bottom: 1px solid transparent;
+      transition: opacity 0.15s ease;
+    }
+    .calendario-summary::-webkit-details-marker { display: none; }
+    .calendario-details[open] .calendario-summary {
+      border-bottom-color: rgba(255, 255, 255, 0.2);
+    }
+    .calendario-summary:hover {
+      opacity: 0.95;
+    }
+    .cal-summary-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .cal-bar-accent {
+      width: 6px;
+      height: 28px;
+      border-radius: 999px;
+      background: #007DC5;
+      flex-shrink: 0;
+    }
+    .cal-summary-sub {
+      font-size: 11.5px;
+      color: #e0f2fe;
+      margin-top: 2px;
+      font-weight: 500;
+    }
+    .cal-summary-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .cal-periodo-badge {
+      background: rgba(255, 255, 255, 0.2);
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      color: #ffffff;
+      font-size: 11px;
+      font-weight: 800;
+      padding: 5px 12px;
+      border-radius: 999px;
+      letter-spacing: 0.02em;
+    }
+    .cal-toggle-pill {
+      background: #ffffff;
+      color: #034EA2;
+      font-size: 11px;
+      font-weight: 800;
+      padding: 6px 14px;
+      border-radius: 999px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+    .calendario-details[open] .cal-toggle-text-closed { display: none; }
+    .calendario-details:not([open]) .cal-toggle-text-open { display: none; }
+    .calendario-body {
+      padding: 20px;
+      display: grid;
+      grid-template-columns: 7fr 5fr;
+      gap: 20px;
+    }
+    @media (max-width: 900px) {
+      .calendario-body { grid-template-columns: 1fr; }
+    }
+    .cal-articulos-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+      align-content: start;
+    }
+    @media (max-width: 600px) {
+      .cal-articulos-grid { grid-template-columns: 1fr; }
+    }
+    .cal-box {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 14px;
+    }
+    .cal-box-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .cal-box-title {
+      font-family: 'Outfit', sans-serif;
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: var(--vf-blue-deep);
+      margin: 0;
+    }
+    .cal-badge {
+      font-size: 10px;
+      font-weight: 800;
+      color: #ffffff;
+      padding: 2px 8px;
+      border-radius: 5px;
+    }
+    .cal-item {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 7px;
+      padding: 7px 10px;
+      font-size: 11.5px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      color: #334155;
+      font-weight: 500;
+    }
+    .cal-item:last-child { margin-bottom: 0; }
+    .festivos-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 7px;
+    }
+    @media (max-width: 520px) {
+      .festivos-grid { grid-template-columns: 1fr; }
+    }
+    .festivo-card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 7px;
+      padding: 7px 10px;
+      font-size: 11px;
+    }
+    .festivo-card.festivo-activo {
+      background: #fff1f2;
+      border-color: var(--vf-magenta);
+    }
+    .festivo-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 4px;
+      font-weight: 800;
+      color: var(--vf-blue-deep);
+    }
+    .festivo-card.festivo-activo .festivo-top {
+      color: var(--vf-magenta);
+    }
+    .festivo-tag-hoy {
+      background: var(--vf-magenta);
+      color: #ffffff;
+      font-size: 9px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      text-transform: uppercase;
+    }
+    .festivo-nombre {
+      font-size: 10.5px;
+      color: #64748b;
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    @media print {
+      body { background: #fff; padding: 0; }
+      .barra-superior { display: none; }
+      .contenedor { box-shadow: none; border: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="contenedor">
+    <div class="franja-corporativa"></div>
+
+    <div class="hero-institucional">
+      <div class="hero-top">
+        <div class="logo-card">
+          <img src="${rutaLogoOficial}" alt="Institución Educativa Villa Flora" />
+        </div>
+        <div class="meta-edicion">
+          <div class="badge-edicion">NOTIPROFES N° ${boletin.numero}</div>
+          <div>FECHA DE EMISIÓN: <strong>${escaparHtml(boletin.fechaEmision)}</strong></div>
+          <div>DE: ${escaparHtml(boletin.remitente)} · PARA: ${escaparHtml(boletin.destinatarios)}</div>
+          <div class="acciones-top" style="margin-top: 10px; justify-content: flex-end;">
+            <button id="btn-vista-grafica" class="btn-modo activo" onclick="cambiarVista('grafica')">Vista Gráfica</button>
+            <button id="btn-vista-tabla" class="btn-modo" onclick="cambiarVista('tabla')">Vista Tabla</button>
+            <button class="btn-imprimir" onclick="window.print()" title="Abrir cuadro de impresión">Imprimir</button>
+            <button class="btn-imprimir" id="btn-descargar-pdf-directo" style="background: #034EA2;" onclick="descargarPdfDirectoHtml()" title="Descargar archivo PDF directamente con colores y gráficos completos">Descargar PDF</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="hero-grid">
+        <div class="hero-semana">
+          <h1>${escaparHtml(boletin.semanaTexto)}</h1>
+          <div style="font-size: 13.5px; color: #e0f2fe; line-height: 1.4;">
+            <div>${escaparHtml(boletin.descripcionPeriodo)}</div>
+            <div style="margin-top: 2px;">${escaparHtml(boletin.subtituloPeriodo.replace(/\.?$/, '.'))}</div>
+          </div>
+        </div>
+
+        <div class="cita-box">
+          <span class="cita-bg-quote-open">&ldquo;</span>
+          <span class="cita-bg-quote-close">&rdquo;</span>
+          <div class="cita-kicker">Reflexión Pedagógica</div>
+          <div class="cita-texto">${formatearTextoAHtmlSeguro(boletin.frasePedagogica)}</div>
+          <div class="cita-autor">— ${escaparHtml(boletin.autorFrase)}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="kpi-ribbon">
+      <div class="kpi-card">
+        <div>
+          <div class="kpi-label">Actividades de la Semana</div>
+          <div class="kpi-val">${totalActividades}</div>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div>
+          <div class="kpi-label">Documentos y Horarios</div>
+          <div class="kpi-val">${boletin.documentosPermanentes.length}</div>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div>
+          <div class="kpi-label">Hitos a Largo Plazo</div>
+          <div class="kpi-val">${boletin.proyeccionCalendario.length}</div>
+        </div>
+      </div>
+      <div class="kpi-card">
+        <div>
+          <div class="kpi-label">Reprogramaciones Activas</div>
+          <div class="kpi-val magenta">${totalReprogramadas}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="carga-semanal-box">
+      ${barrasDiasHtml}
+    </div>
+
+    <div class="cuerpo">
+      <div class="seccion-bloque">
+        <div class="sec-head">
+          <h3 class="subtitulo-seccion">Documentos, Resoluciones y Horarios de la Semana</h3>
+          <span class="sec-counter">${boletin.documentosPermanentes.length} archivos oficiales</span>
+        </div>
+        <div class="docs-grid">
+          ${tarjetasDocsHtml}
+        </div>
+      </div>
+
+      <div class="seccion-bloque">
+        <div class="sec-head">
+          <h3 class="subtitulo-seccion">Programación de Actividades de la Semana</h3>
+          <span class="sec-counter">${totalActividades} actividades programadas</span>
+        </div>
+
+        <div id="contenedor-vista-grafica" class="days-grid">
+          ${tarjetasDiasGraficasHtml}
+        </div>
+
+        <div id="contenedor-vista-tabla" class="oculto">
+          <table class="tabla-moderna">
+            <thead>
+              <tr>
+                <th>FECHA</th>
+                <th>ACTIVIDADES</th>
+                <th>RESPONSABLE</th>
+                <th>HORA</th>
+                <th>LUGAR</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${filasDiasTablaHtml}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="seccion-bloque">
+        <div class="sec-head">
+          <h3 class="subtitulo-seccion">PROYECCIÓN DE CALENDARIO DE FINALIZACIÓN</h3>
+          <span class="sec-counter">${finalizacionItems.length} hitos institucionales</span>
+        </div>
+        <ul class="lista-items">
+          ${finalizacionItems
+            .map(
+              (item) =>
+                `<li><strong>${escaparHtml(item.fechaTexto)}:</strong> ${formatearTextoAHtmlSeguro(
+                  item.descripcion
+                )}</li>`
+            )
+            .join('')}
+        </ul>
+      </div>
+
+      <div class="banner-notipracticas">
+        <span>NOTI PRÁCTICAS · RECONOCIMIENTOS Y CONVIVENCIA</span>
+      </div>
+
+      <div class="seccion-bloque">
+        <div class="sec-head">
+          <h3 class="subtitulo-seccion">Felicitaciones y Reconocimientos Docentes</h3>
+          <span class="sec-counter">${boletin.felicitaciones.length} menciones de honor</span>
+        </div>
+        <div class="fel-grid">
+          ${boletin.felicitaciones
+            .map(
+              (f) => `
+            <div class="fel-card">
+              <div class="fel-name">★ ${escaparHtml(f.docentes)}</div>
+              <div class="fel-desc">${formatearTextoAHtmlSeguro(f.motivo)}</div>
+            </div>`
+            )
+            .join('')}
+        </div>
+      </div>
+
+      <div class="seccion-bloque">
+        <div class="sec-head">
+          <h3 class="subtitulo-seccion">Directrices Institucionales y Zonas de Acompañamiento</h3>
+        </div>
+        <ul class="lista-items">
+          ${boletin.avisosPracticas.map((aviso) => `<li>${formatearTextoAHtmlSeguro(aviso)}</li>`).join('')}
+          ${boletin.zonasAcompanamientoNotas
+            .map((nota) => `<li><strong>Zona de acompañamiento:</strong> ${formatearTextoAHtmlSeguro(nota)}</li>`)
+            .join('')}
+        </ul>
+        <div style="margin-top: 18px; padding: 18px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 13px;">
+          <strong style="color: #034EA2;">Ruta obligatoria de atención ante dificultades de salud o lesión escolar:</strong>
+          <div class="pasos-grid">
+            ${boletin.pasosAccidenteEscolar
+              .map(
+                (paso, i) => `
+              <div class="paso-card">
+                <span class="paso-num">${i + 1}</span>
+                <span>${escaparHtml(paso.replace(/^\d+\.\s*/, ''))}</span>
+              </div>`
+              )
+              .join('')}
+          </div>
+          <div style="margin-top: 8px;"><strong>Póliza escolar oficial:</strong> <a style="color: #007DC5; font-weight: 700;" href="${escaparHtml(
+            boletin.polizaEscolarDoc.url
+          )}" target="_blank" rel="noopener noreferrer">${escaparHtml(
+            boletin.polizaEscolarDoc.titulo
+          )} →</a></div>
+        </div>
+      </div>
+
+      ${seccionSuspensionesHtml}
+
+      <div class="seccion-bloque">
+        <div class="sec-head">
+          <h3 class="subtitulo-seccion">Próximas Actividades y Capacitaciones</h3>
+          <span class="sec-counter">${proximasItems.length} eventos</span>
+        </div>
+        <ul class="lista-items">
+          ${proximasItems
+            .map(
+              (item) =>
+                `<li><strong>${escaparHtml(item.fechaTexto)}:</strong> ${formatearTextoAHtmlSeguro(
+                  item.descripcion
+                )}</li>`
+            )
+            .join('')}
+        </ul>
+      </div>
+
+      <details class="calendario-details" open>
+        <summary class="calendario-summary">
+          <div class="cal-summary-left">
+            <div class="cal-bar-accent"></div>
+            <div>
+              <h3 class="subtitulo-seccion" style="margin: 0;">Calendario Académico Oficial ${calendarioActivo.anio} (Medellín) y Festivos del Año</h3>
+              <div class="cal-summary-sub">${escaparHtml(calendarioActivo.resolucionTexto)}</div>
+            </div>
+          </div>
+          <div class="cal-summary-right">
+            <span class="cal-periodo-badge">${estadoCalendario.numeroPeriodo}<sup>${escaparHtml(
+              estadoCalendario.ordinalSup
+            )}</sup> PERIODO · ${escaparHtml(estadoCalendario.textoSemanaDePeriodo)}</span>
+            <span class="cal-toggle-pill">
+              <span class="cal-toggle-text-closed">▼ Desplegar Calendario</span>
+              <span class="cal-toggle-text-open">▲ Ocultar Calendario</span>
+            </span>
+          </div>
+        </summary>
+        <div class="calendario-body">
+          <div class="cal-articulos-grid">
+            <div class="cal-box">
+              <div class="cal-box-head">
+                <h4 class="cal-box-title">Art. 2 · Semanas Lectivas</h4>
+                <span class="cal-badge" style="background: #034EA2;">${calendarioActivo.semanasLectivas.reduce((acc, b) => acc + b.semanas, 0)} semanas</span>
+              </div>
+              ${renderBloquesCalendarioHtml(calendarioActivo.semanasLectivas, '#007DC5')}
+            </div>
+
+            <div class="cal-box">
+              <div class="cal-box-head">
+                <h4 class="cal-box-title">Art. 3 · Desarrollo Inst.</h4>
+                <span class="cal-badge" style="background: #007DC5;">${calendarioActivo.semanasDesarrollo.reduce((acc, b) => acc + b.semanas, 0)} semanas</span>
+              </div>
+              ${renderBloquesCalendarioHtml(calendarioActivo.semanasDesarrollo, '#034EA2')}
+            </div>
+
+            <div class="cal-box">
+              <div class="cal-box-head">
+                <h4 class="cal-box-title">Art. 4 · Vacaciones Docentes</h4>
+                <span class="cal-badge" style="background: #334155;">${calendarioActivo.vacacionesDocentes.reduce((acc, b) => acc + b.semanas, 0)} semanas</span>
+              </div>
+              ${renderBloquesCalendarioHtml(calendarioActivo.vacacionesDocentes, '#334155')}
+            </div>
+
+            <div class="cal-box">
+              <div class="cal-box-head">
+                <h4 class="cal-box-title">Art. 5 · Receso Estudiantil</h4>
+                <span class="cal-badge" style="background: #047857;">${calendarioActivo.recesoEstudiantil.reduce((acc, b) => acc + b.semanas, 0)} semanas</span>
+              </div>
+              ${renderBloquesCalendarioHtml(calendarioActivo.recesoEstudiantil, '#047857')}
+            </div>
+          </div>
+
+          <div class="cal-box">
+            <div class="cal-box-head">
+              <h4 class="cal-box-title">Festivos Oficiales de Colombia · Año ${calendarioActivo.anio}</h4>
+              <span class="cal-badge" style="background: #ED145B;">${calendarioActivo.festivos.length} festivos</span>
+            </div>
+            <div class="festivos-grid">
+              ${festivosGridHtml}
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <div class="seccion-bloque">
+        <div class="sec-head">
+          <h3 class="subtitulo-seccion">Horarios del Personal de Apoyo, Auxiliares y Seguridad</h3>
+          <span class="sec-counter">Lunes a Viernes</span>
+        </div>
+
+        <!-- VISTA MÓVIL: TARJETAS VERTICALES POR FUNCIONARIO (SIN CORTE) -->
+        <div class="cards-apoyo-movil">
+          ${boletin.horariosApoyo
+            .map(
+              (h) => `
+            <div class="card-apoyo-item">
+              <div class="card-apoyo-head">
+                <span class="card-apoyo-badge">${escaparHtml(h.rol)}</span>
+                <div class="card-apoyo-nombre">${escaparHtml(h.nombre)}</div>
+              </div>
+              <div class="card-apoyo-days">
+                <div class="day-row-movil"><span>Lunes:</span><strong>${escaparHtml(h.lunes)}</strong></div>
+                <div class="day-row-movil"><span>Martes:</span><strong>${escaparHtml(h.martes)}</strong></div>
+                <div class="day-row-movil"><span>Miércoles:</span><strong>${escaparHtml(h.miercoles)}</strong></div>
+                <div class="day-row-movil"><span>Jueves:</span><strong>${escaparHtml(h.jueves)}</strong></div>
+                <div class="day-row-movil"><span>Viernes:</span><strong>${escaparHtml(h.viernes)}</strong></div>
+              </div>
+            </div>`
+            )
+            .join('')}
+        </div>
+
+        <!-- VISTA TABLET / ESCRITORIO: TABLA CON SCROLL GARANTIZADO MIN-WIDTH -->
+        <div class="tabla-apoyo-container tabla-apoyo-desktop">
+          <table class="tabla-moderna">
+            <thead>
+              <tr>
+                <th>Funcionario / Rol</th>
+                <th>Lunes</th>
+                <th>Martes</th>
+                <th>Miércoles</th>
+                <th>Jueves</th>
+                <th>Viernes</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${boletin.horariosApoyo
+                .map(
+                  (h) => `
+                <tr>
+                  <td><strong style="color: #034EA2;">${escaparHtml(h.rol)}</strong><br/>${escaparHtml(h.nombre)}</td>
+                  <td class="mono">${escaparHtml(h.lunes)}</td>
+                  <td class="mono">${escaparHtml(h.martes)}</td>
+                  <td class="mono">${escaparHtml(h.miercoles)}</td>
+                  <td class="mono">${escaparHtml(h.jueves)}</td>
+                  <td class="mono">${escaparHtml(h.viernes)}</td>
+                </tr>`
+                )
+                .join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="firmas-grid">
+        ${boletin.firmas
+          .map(
+            (f) => `
+          <div>
+            <div style="font-weight: 800; color: #034EA2; font-family: 'Outfit', sans-serif;">${escaparHtml(f.nombre)}</div>
+            <div style="color: #64748b; font-weight: 600; font-size: 11.5px; margin-top: 2px;">${escaparHtml(
+              f.cargo
+            )}</div>
+          </div>`
+          )
+          .join('')}
+      </div>
+    </div>
+  </div>
+  <script>
+    function cambiarVista(modo) {
+      var grafica = document.getElementById('contenedor-vista-grafica');
+      var tabla = document.getElementById('contenedor-vista-tabla');
+      var btnGrafica = document.getElementById('btn-vista-grafica');
+      var btnTabla = document.getElementById('btn-vista-tabla');
+      if (!grafica || !tabla || !btnGrafica || !btnTabla) return;
+
+      if (modo === 'tabla') {
+        grafica.classList.add('oculto');
+        tabla.classList.remove('oculto');
+        btnGrafica.classList.remove('activo');
+        btnTabla.classList.add('activo');
+        try { localStorage.setItem('notiprofes_vista_publica', 'tabla'); } catch (e) {}
+      } else {
+        tabla.classList.add('oculto');
+        grafica.classList.remove('oculto');
+        btnTabla.classList.remove('activo');
+        btnGrafica.classList.add('activo');
+        try { localStorage.setItem('notiprofes_vista_publica', 'grafica'); } catch (e) {}
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+      // 1. Restaurar modo de vista seleccionado (Tabla o Gráfica)
+      try {
+        var vistaGuardada = localStorage.getItem('notiprofes_vista_publica');
+        if (vistaGuardada === 'tabla') {
+          cambiarVista('tabla');
+        }
+      } catch (e) {}
+
+      // 2. Restaurar y monitorear el despliegue del Calendario Oficial y Festivos
+      var calDetails = document.querySelector('.calendario-details');
+      if (calDetails) {
+        try {
+          var calAbierto = localStorage.getItem('notiprofes_cal_abierto');
+          if (calAbierto === '1') {
+            calDetails.open = true;
+          }
+          calDetails.addEventListener('toggle', function() {
+            try {
+              localStorage.setItem('notiprofes_cal_abierto', calDetails.open ? '1' : '0');
+            } catch (e) {}
+          });
+        } catch (e) {}
+      }
+    });
+
+    function cargarScriptDinamico(url) {
+      return new Promise(function(resolve, reject) {
+        var existente = document.querySelector('script[src="' + url + '"]');
+        if (existente) {
+          resolve();
+          return;
+        }
+        var script = document.createElement('script');
+        script.src = url;
+        script.onload = function() { resolve(); };
+        script.onerror = function(e) { reject(e); };
+        document.head.appendChild(script);
+      });
+    }
+
+    function descargarPdfDirectoHtml() {
+      var btn = document.getElementById('btn-descargar-pdf-directo');
+      var textoPrevio = btn ? btn.innerText : 'Descargar PDF';
+      if (btn) {
+        btn.innerText = 'Generando PDF...';
+        btn.disabled = true;
+      }
+
+      Promise.all([
+        window.html2canvas
+          ? Promise.resolve()
+          : cargarScriptDinamico('https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js'),
+        (window.jspdf && window.jspdf.jsPDF) || window.jsPDF
+          ? Promise.resolve()
+          : cargarScriptDinamico('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js')
+      ]).then(function() {
+        var element = document.querySelector('.contenedor') || document.body;
+        var acciones = document.querySelector('.acciones-top');
+        var prevScrollX = window.scrollX || window.pageXOffset || 0;
+        var prevScrollY = window.scrollY || window.pageYOffset || 0;
+
+        var prevBodyPadding = document.body.style.padding;
+        var prevWidth = element.style.width;
+        var prevMaxWidth = element.style.maxWidth;
+        var prevMargin = element.style.margin;
+        var prevAccionesDisplay = acciones ? acciones.style.display : '';
+
+        // Fijar el contenedor en la esquina (0,0) con ancho completo de escritorio para evitar recortes laterales o verticales
+        window.scrollTo(0, 0);
+        document.body.style.padding = '0';
+        element.style.width = '1120px';
+        element.style.maxWidth = '1120px';
+        element.style.margin = '0';
+        if (acciones) acciones.style.display = 'none';
+
+        var targetWidth = 1120;
+        var targetHeight = Math.max(element.scrollHeight, element.offsetHeight, 1200);
+
+        return window.html2canvas(element, {
+          scale: 2,
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: '#ffffff',
+          logging: false,
+          x: 0,
+          y: 0,
+          scrollX: 0,
+          scrollY: 0,
+          width: targetWidth,
+          height: targetHeight,
+          windowWidth: targetWidth,
+          windowHeight: targetHeight + 100
+        }).then(function(canvas) {
+          // Restaurar estilos inmediatamente
+          document.body.style.padding = prevBodyPadding;
+          element.style.width = prevWidth;
+          element.style.maxWidth = prevMaxWidth;
+          element.style.margin = prevMargin;
+          if (acciones) acciones.style.display = prevAccionesDisplay;
+          window.scrollTo(prevScrollX, prevScrollY);
+
+          var imgData = canvas.toDataURL('image/jpeg', 0.96);
+          var marginMm = 6;
+          var contentWidthMm = 216;
+          var pdfWidthMm = contentWidthMm + marginMm * 2;
+          var contentHeightMm = Math.ceil((canvas.height * contentWidthMm) / canvas.width);
+          var pdfHeightMm = contentHeightMm + marginMm * 2;
+
+          var jsPDFClass = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
+          var orientacion = pdfWidthMm > pdfHeightMm ? 'landscape' : 'portrait';
+          var pdf = new jsPDFClass({
+            orientation: orientacion,
+            unit: 'mm',
+            format: [pdfWidthMm, pdfHeightMm],
+            compress: true
+          });
+
+          pdf.addImage(imgData, 'JPEG', marginMm, marginMm, contentWidthMm, contentHeightMm, undefined, 'FAST');
+          pdf.save('${escaparHtml(nombreArchivoPdf)}');
+
+          if (btn) {
+            btn.innerText = textoPrevio;
+            btn.disabled = false;
+          }
+        }).catch(function(err) {
+          document.body.style.padding = prevBodyPadding;
+          element.style.width = prevWidth;
+          element.style.maxWidth = prevMaxWidth;
+          element.style.margin = prevMargin;
+          if (acciones) acciones.style.display = prevAccionesDisplay;
+          window.scrollTo(prevScrollX, prevScrollY);
+          throw err;
+        });
+      }).catch(function(err) {
+        console.error('Error al generar PDF directo:', err);
+        if (btn) {
+          btn.innerText = textoPrevio;
+          btn.disabled = false;
+        }
+        window.print();
+      });
+    }
+  </script>
+</body>
+</html>`;
+}
+
+
+
