@@ -133,6 +133,9 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
   seccionInicial = 'semanal',
 }) => {
   const [seccion, setSeccion] = useState<SeccionEditor>(seccionInicial);
+  useEffect(() => {
+    setSeccion(seccionInicial);
+  }, [seccionInicial]);
   const [mensajeEstado, setMensajeEstado] = useState<string | null>(null);
   const [errorValidacion, setErrorValidacion] = useState<string | null>(null);
 
@@ -251,16 +254,58 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
 
   const [frasePedagogicaEdit, setFrasePedagogicaEdit] = useState(boletin.frasePedagogica || '');
   const [autorFraseEdit, setAutorFraseEdit] = useState(boletin.autorFrase || '');
-  const [reflexionColapsada, setReflexionColapsada] = useState<boolean>(true);
+  const [reflexionColapsada, setReflexionColapsada] = useState<boolean>(() => {
+    try {
+      const guardado = localStorage.getItem('notiprofes_editor_reflexion_colapsada');
+      return guardado !== null ? guardado === '1' : true;
+    } catch {
+      return true;
+    }
+  });
 
-  const [diasColapsados, setDiasColapsados] = useState<Record<string, boolean>>({});
+  useEffect(() => {
+    try {
+      localStorage.setItem('notiprofes_editor_reflexion_colapsada', reflexionColapsada ? '1' : '0');
+    } catch {
+      // Ignorar fallo de cuota local
+    }
+  }, [reflexionColapsada]);
+
+  const obtenerDiasColapsadosGuardados = (boletinId: string): Record<string, boolean> => {
+    try {
+      const raw = localStorage.getItem(`notiprofes_editor_dias_colapsados_${boletinId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch {
+      // Ignorar error de lectura local
+    }
+    return {};
+  };
+
+  const [diasColapsados, setDiasColapsados] = useState<Record<string, boolean>>(() =>
+    obtenerDiasColapsadosGuardados(boletin.id)
+  );
   const [filtroDiaEditor, setFiltroDiaEditor] = useState<string>('todos');
   const [paginaHistorial, setPaginaHistorial] = useState<number>(1);
   const REGISTROS_POR_PAGINA = 100;
 
   useEffect(() => {
     setPaginaHistorial(1);
+    setDiasColapsados(obtenerDiasColapsadosGuardados(boletin.id));
   }, [boletin.id]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        `notiprofes_editor_dias_colapsados_${boletin.id}`,
+        JSON.stringify(diasColapsados)
+      );
+    } catch {
+      // Ignorar fallo de cuota local
+    }
+  }, [boletin.id, diasColapsados]);
 
   // Estados para importación de Decreto de Calendario Académico (2027+)
   const [anioDecreto, setAnioDecreto] = useState<number>(2027);
@@ -1490,7 +1535,7 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
                           title={`Agregar actividad para ${dia.fechaTexto}`}
                         >
                           <Plus className="w-3.5 h-3.5" />
-                          <span>+ Actividad</span>
+                          <span>Actividad</span>
                         </button>
 
                         <button
@@ -2949,7 +2994,7 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
                     className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white hover:bg-sky-100 text-[#034EA2] border border-sky-300 font-bold text-[11px] transition-colors cursor-pointer"
                   >
                     <Plus className="w-3 h-3" />
-                    <span>+ Agregar fila</span>
+                    <span>Agregar fila</span>
                   </button>
                   <button
                     type="button"

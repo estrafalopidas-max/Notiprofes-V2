@@ -63,7 +63,38 @@ export const VistaBoletinOficial: React.FC<VistaBoletinOficialProps> = ({
       return 'ejecutiva';
     }
   });
-  const [diasColapsados, setDiasColapsados] = useState<Record<string, boolean>>({});
+  const obtenerDiasColapsadosBoletin = (boletinId: string): Record<string, boolean> => {
+    try {
+      const raw = localStorage.getItem(`notiprofes_boletin_dias_colapsados_${boletinId}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') return parsed;
+      }
+    } catch {
+      // Ignorar fallo de lectura local
+    }
+    return {};
+  };
+
+  const [diasColapsados, setDiasColapsados] = useState<Record<string, boolean>>(() =>
+    obtenerDiasColapsadosBoletin(boletin.id)
+  );
+
+  useEffect(() => {
+    setDiasColapsados(obtenerDiasColapsadosBoletin(boletin.id));
+  }, [boletin.id]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        `notiprofes_boletin_dias_colapsados_${boletin.id}`,
+        JSON.stringify(diasColapsados)
+      );
+    } catch {
+      // Ignorar fallo de cuota local
+    }
+  }, [boletin.id, diasColapsados]);
+
   const [calendarioAbierto, setCalendarioAbierto] = useState<boolean>(() => {
     try {
       const v = localStorage.getItem('notiprofes_cal_abierto');

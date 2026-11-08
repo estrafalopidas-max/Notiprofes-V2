@@ -1130,7 +1130,6 @@ export default function App() {
 
           {vistaActiva === 'editor' && (
             <PanelEditorColaborativo
-              key={seccionEditorInicial}
               boletin={boletin}
               usuarioActual={usuarioDirectivo}
               tokenSesion={tokenSesion}
