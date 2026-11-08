@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ArrowLeft,
   CheckCircle2,
+  Clock,
   Eye,
   EyeOff,
   Lock,
@@ -22,6 +23,24 @@ import {
 import { RolUsuario, UsuarioDirectivo } from '../types/notiprofes';
 import { DropdownPersonalizado } from './DropdownPersonalizado';
 
+const OPCIONES_TIEMPO_INACTIVIDAD: Array<{ valor: string; etiqueta: string; descripcion: string }> = [
+  { valor: '5', etiqueta: '5 minutos', descripcion: 'Cierre rápido tras 5 min sin actividad' },
+  { valor: '10', etiqueta: '10 minutos', descripcion: 'Cierre tras 10 min sin actividad' },
+  { valor: '15', etiqueta: '15 minutos (Estándar)', descripcion: 'Tiempo institucional recomendado' },
+  { valor: '30', etiqueta: '30 minutos', descripcion: 'Media hora de sesión activa sin uso' },
+  { valor: '60', etiqueta: '1 hora (60 min)', descripcion: 'Sesión extendida para trabajo continuo' },
+  { valor: '120', etiqueta: '2 horas (120 min)', descripcion: 'Jornada amplia de edición' },
+  { valor: '240', etiqueta: '4 horas (240 min)', descripcion: 'Media jornada institucional' },
+  { valor: '0', etiqueta: 'Nunca cerrar automáticamente', descripcion: 'Mantener sesión abierta hasta cerrar manualmente' },
+];
+
+function formatearEtiquetaInactividad(minutos?: number): string {
+  const m = minutos ?? 15;
+  if (m === 0) return 'Nunca cerrar automáticamente';
+  const encontrada = OPCIONES_TIEMPO_INACTIVIDAD.find((o) => Number(o.valor) === m);
+  return encontrada ? encontrada.etiqueta : `${m} minutos`;
+}
+
 interface ModalAdministracionUsuariosProps {
   abierto: boolean;
   onCerrar: () => void;
@@ -29,6 +48,7 @@ interface ModalAdministracionUsuariosProps {
   tokenSesion?: string | null;
   onSolicitarLogin?: () => void;
   onUsuarioCreado?: (usuario: UsuarioDirectivo) => void;
+  onUsuarioActualizado?: (usuario: UsuarioDirectivo) => void;
 }
 
 const ROLES_INFO: Record<
@@ -63,6 +83,7 @@ export const ModalAdministracionUsuarios: React.FC<
   tokenSesion,
   onSolicitarLogin,
   onUsuarioCreado,
+  onUsuarioActualizado,
 }) => {
   const [usuarios, setUsuarios] = useState<UsuarioDirectivo[]>([]);
   const [busqueda, setBusqueda] = useState<string>('');
@@ -77,6 +98,7 @@ export const ModalAdministracionUsuarios: React.FC<
   const [nuevoRol, setNuevoRol] = useState<RolUsuario>('editor');
   const [nuevoCorreo, setNuevoCorreo] = useState<string>('');
   const [nuevoPin, setNuevoPin] = useState<string>('');
+  const [nuevoTiempoInactividad, setNuevoTiempoInactividad] = useState<number>(15);
 
   // Estado para edición
   const [usuarioEditando, setUsuarioEditando] = useState<UsuarioDirectivo | null>(null);
@@ -85,6 +107,7 @@ export const ModalAdministracionUsuarios: React.FC<
   const [editRol, setEditRol] = useState<RolUsuario>('editor');
   const [editCorreo, setEditCorreo] = useState<string>('');
   const [editPin, setEditPin] = useState<string>('');
+  const [editTiempoInactividad, setEditTiempoInactividad] = useState<number>(15);
 
   // Estado para confirmación de eliminación
   const [usuarioAEliminar, setUsuarioAEliminar] = useState<UsuarioDirectivo | null>(null);
@@ -207,6 +230,7 @@ export const ModalAdministracionUsuarios: React.FC<
           rol: nuevoRol,
           correo: nuevoCorreo.trim(),
           pin: nuevoPin.trim(),
+          tiempoInactividadMinutos: nuevoTiempoInactividad,
         }),
       });
 
@@ -222,6 +246,7 @@ export const ModalAdministracionUsuarios: React.FC<
       setNuevoCorreo('');
       setNuevoPin('');
       setNuevoRol('editor');
+      setNuevoTiempoInactividad(15);
 
       cargarUsuarios();
       if (onUsuarioCreado && data.usuario) {
@@ -246,6 +271,7 @@ export const ModalAdministracionUsuarios: React.FC<
     setEditRol(u.rol);
     setEditCorreo(u.correo || '');
     setEditPin('');
+    setEditTiempoInactividad(u.tiempoInactividadMinutos ?? 15);
     setError(null);
     setExito(null);
   };
@@ -289,6 +315,7 @@ export const ModalAdministracionUsuarios: React.FC<
           rol: editRol,
           correo: editCorreo.trim(),
           pin: editPin.trim() || undefined,
+          tiempoInactividadMinutos: editTiempoInactividad,
         }),
       });
 
@@ -298,6 +325,9 @@ export const ModalAdministracionUsuarios: React.FC<
         return;
       }
 
+      if (onUsuarioActualizado && data.usuario) {
+        onUsuarioActualizado(data.usuario);
+      }
       setExito(`Perfil de «${editNombre.trim()}» actualizado con éxito.`);
       setUsuarioEditando(null);
       cargarUsuarios();
@@ -741,18 +771,37 @@ export const ModalAdministracionUsuarios: React.FC<
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-800 mb-1">
-                  Nueva contraseña o PIN (dejar en blanco para mantener la actual):
-                </label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  <input
-                    type="password"
-                    value={editPin}
-                    onChange={(e) => setEditPin(e.target.value)}
-                    placeholder="Mínimo 4 dígitos para actualizar"
-                    className="w-full pl-9 pr-3 py-1.5 text-xs sm:text-sm rounded-lg border border-slate-200 bg-white text-slate-800 font-mono-tabular focus:outline-none focus:border-[#007DC5] focus:ring-1 focus:ring-[#007DC5]/20 transition-all font-medium"
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    Nueva contraseña o PIN (opcional):
+                  </label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="password"
+                      value={editPin}
+                      onChange={(e) => setEditPin(e.target.value)}
+                      placeholder="Dejar vacío para conservar actual"
+                      className="w-full pl-9 pr-3 py-1.5 text-xs sm:text-sm rounded-lg border border-slate-200 bg-white text-slate-800 font-mono-tabular focus:outline-none focus:border-[#007DC5] focus:ring-1 focus:ring-[#007DC5]/20 transition-all font-medium"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    Tiempo de cierre por inactividad:
+                  </label>
+                  <DropdownPersonalizado
+                    modo="simple"
+                    anchoCompleto
+                    varianteBoton="campo"
+                    ariaLabel="Tiempo de cierre por inactividad"
+                    icono={<Clock className="w-4 h-4 text-[#007DC5]" />}
+                    etiquetaBoton={formatearEtiquetaInactividad(editTiempoInactividad)}
+                    valorSeleccionado={String(editTiempoInactividad)}
+                    onChange={(val) => setEditTiempoInactividad(Number(val))}
+                    opciones={OPCIONES_TIEMPO_INACTIVIDAD}
                   />
                 </div>
               </div>
@@ -842,6 +891,10 @@ export const ModalAdministracionUsuarios: React.FC<
                               {u.correo && (
                                 <> · <span>{u.correo}</span></>
                               )}
+                              {' · '}
+                              <span className="text-sky-700 font-semibold">
+                                Cierre: {(u.tiempoInactividadMinutos ?? 15) === 0 ? 'Sin límite' : `${u.tiempoInactividadMinutos ?? 15} min`}
+                              </span>
                             </div>
                           </div>
                         </div>
@@ -956,19 +1009,38 @@ export const ModalAdministracionUsuarios: React.FC<
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-800 mb-1">
-                  PIN o contraseña de acceso (mín. 4 dígitos):
-                </label>
-                <div className="relative">
-                  <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                  <input
-                    type="password"
-                    required
-                    value={nuevoPin}
-                    onChange={(e) => setNuevoPin(e.target.value)}
-                    placeholder="Ej: 2026"
-                    className="w-full pl-9 pr-3 py-1.5 text-xs sm:text-sm rounded-lg border border-slate-200 bg-white text-slate-800 font-mono-tabular focus:outline-none focus:border-[#007DC5] focus:ring-1 focus:ring-[#007DC5]/20 transition-all font-medium"
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    PIN o contraseña de acceso (mín. 4 dígitos):
+                  </label>
+                  <div className="relative">
+                    <Lock className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="password"
+                      required
+                      value={nuevoPin}
+                      onChange={(e) => setNuevoPin(e.target.value)}
+                      placeholder="Ej: 2026"
+                      className="w-full pl-9 pr-3 py-1.5 text-xs sm:text-sm rounded-lg border border-slate-200 bg-white text-slate-800 font-mono-tabular focus:outline-none focus:border-[#007DC5] focus:ring-1 focus:ring-[#007DC5]/20 transition-all font-medium"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-800 mb-1">
+                    Tiempo de cierre por inactividad:
+                  </label>
+                  <DropdownPersonalizado
+                    modo="simple"
+                    anchoCompleto
+                    varianteBoton="campo"
+                    ariaLabel="Tiempo de cierre por inactividad"
+                    icono={<Clock className="w-4 h-4 text-[#007DC5]" />}
+                    etiquetaBoton={formatearEtiquetaInactividad(nuevoTiempoInactividad)}
+                    valorSeleccionado={String(nuevoTiempoInactividad)}
+                    onChange={(val) => setNuevoTiempoInactividad(Number(val))}
+                    opciones={OPCIONES_TIEMPO_INACTIVIDAD}
                   />
                 </div>
               </div>

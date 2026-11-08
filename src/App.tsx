@@ -367,9 +367,7 @@ export default function App() {
 
     // Monitor de inactividad:
     // 1) 40s sin movimiento: presencia en tiempo real como 'desatendido'
-    // 2) 15 minutos (900.000 ms) sin actividad: auto-logout con resguardo del borrador
-    const TIEMPO_AUTO_LOGOUT_MS = 15 * 60 * 1000;
-
+    // 2) Según el tiempo configurado para cada usuario (por defecto 15 min, o 0 = desactivado): auto-logout
     const timerInactividad = setInterval(() => {
       const msInactivo = Date.now() - ultimoMovimientoRef.current;
       if (msInactivo > 40000 && estadoActividadLocalRef.current === 'editando') {
@@ -378,23 +376,31 @@ export default function App() {
         emitirPresencia(seccionActivaRef.current, undefined, 'desatendido');
       }
 
-      if (msInactivo >= TIEMPO_AUTO_LOGOUT_MS && tokenRef.current) {
-        try {
-          if (boletinRef.current) {
-            localStorage.setItem(
-              'notiprofes_borrador_seguridad',
-              JSON.stringify(boletinRef.current)
-            );
-          }
-        } catch {
-          // Ignorar fallo de almacenamiento
-        }
+      const minutosConfigurados =
+        usuarioDirectivo?.tiempoInactividadMinutos !== undefined
+          ? usuarioDirectivo.tiempoInactividadMinutos
+          : 15;
 
-        handleCerrarSesion();
-        setVistaActiva('boletin');
-        setAvisoInactividad(
-          'Sesión cerrada automáticamente tras 15 minutos de inactividad para proteger los datos institucionales. Tu borrador fue resguardado de forma segura.'
-        );
+      if (minutosConfigurados > 0) {
+        const tiempoAutoLogoutMs = minutosConfigurados * 60 * 1000;
+        if (msInactivo >= tiempoAutoLogoutMs && tokenRef.current) {
+          try {
+            if (boletinRef.current) {
+              localStorage.setItem(
+                'notiprofes_borrador_seguridad',
+                JSON.stringify(boletinRef.current)
+              );
+            }
+          } catch {
+            // Ignorar fallo de almacenamiento
+          }
+
+          handleCerrarSesion();
+          setVistaActiva('boletin');
+          setAvisoInactividad(
+            `La sesión se cerró automáticamente tras ${minutosConfigurados} minutos de inactividad. Tu borrador fue resguardado de forma segura.`
+          );
+        }
       }
     }, 5000);
 
@@ -406,7 +412,7 @@ export default function App() {
       window.removeEventListener('touchstart', registrarActividad);
       clearInterval(timerInactividad);
     };
-  }, [emitirPresencia, handleCerrarSesion]);
+  }, [emitirPresencia, handleCerrarSesion, usuarioDirectivo?.tiempoInactividadMinutos]);
 
   const listaConectados = useMemo<PresenciaActiva[]>(() => {
     if (presencia.length > 0) {
@@ -445,6 +451,8 @@ export default function App() {
     } catch {
       // Ignorar error de cuota local
     }
+    ultimoMovimientoRef.current = Date.now();
+    setAvisoInactividad(null);
     setTokenSesion(token);
     setUsuarioDirectivo(usuario);
     setModalLoginAbierto(false);
@@ -549,7 +557,36 @@ export default function App() {
           </a>
         </header>
 
-        <main className="flex-1 flex items-center justify-center my-4">
+        <main className="flex-1 flex flex-col items-center justify-center my-4 gap-4">
+          {avisoInactividad && (
+            <aside
+              role="alert"
+              aria-live="polite"
+              className="max-w-md w-full bg-slate-900/95 backdrop-blur-md text-white px-4 py-3.5 rounded-2xl shadow-2xl border border-amber-400/50 flex items-start gap-3 animate-in fade-in slide-in-from-top-2 duration-200"
+            >
+              <div className="w-8 h-8 rounded-xl bg-amber-500/20 text-amber-400 flex items-center justify-center shrink-0 mt-0.5">
+                <ShieldAlert className="w-4 h-4" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="text-xs font-bold text-amber-300 uppercase tracking-wider mb-0.5">
+                  Cierre de Sesión por Inactividad
+                </div>
+                <p className="text-xs text-slate-200 leading-relaxed">
+                  {avisoInactividad}
+                </p>
+                <div className="mt-2.5 flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setAvisoInactividad(null)}
+                    className="text-xs font-bold px-4 py-1.5 bg-[#007DC5] hover:bg-[#034EA2] text-white rounded-lg transition-colors cursor-pointer"
+                  >
+                    Aceptar
+                  </button>
+                </div>
+              </div>
+            </aside>
+          )}
+
           <ModalAccesoDirectivo
             abierto={true}
             esObligatorio={true}
@@ -1205,6 +1242,16 @@ export default function App() {
           setModalUsuariosAbierto(false);
           setModalLoginAbierto(true);
         }}
+        onUsuarioActualizado={(uActualizado) => {
+          if (usuarioDirectivo && uActualizado.id === usuarioDirectivo.id) {
+            setUsuarioDirectivo(uActualizado);
+            try {
+              localStorage.setItem('notiprofes_usuario', JSON.stringify(uActualizado));
+            } catch {
+              // Ignorar error de cuota local
+            }
+          }
+        }}
       />
 
       <ModalConfirmarLogout
@@ -1220,7 +1267,7 @@ export default function App() {
         onCerrar={() => setNotificacionEditor(null)}
       />
 
-      {/* AVISO DE CIERRE DE SESIÓN POR INACTIVIDAD (15 MINUTOS) */}
+      {/* AVISO DE CIERRE DE SESIÓN POR INACTIVIDAD (SI SE MUESTRA EN CUALQUIER VISTA, SOLO BOTÓN ACEPTAR) */}
       {avisoInactividad && (
         <aside
           role="alert"
@@ -1232,39 +1279,21 @@ export default function App() {
           </div>
           <div className="min-w-0 flex-1">
             <div className="text-xs font-bold text-amber-300 uppercase tracking-wider mb-0.5">
-              Seguridad Institucional · Cierre por Inactividad
+              Cierre de Sesión por Inactividad
             </div>
             <p className="text-xs text-slate-200 leading-relaxed">
               {avisoInactividad}
             </p>
-            <div className="mt-2.5 flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setAvisoInactividad(null);
-                  setModalLoginAbierto(true);
-                }}
-                className="text-xs font-bold px-3 py-1 bg-[#007DC5] hover:bg-[#034EA2] text-white rounded-lg transition-colors cursor-pointer"
-              >
-                Reanudar Sesión
-              </button>
+            <div className="mt-2.5 flex items-center justify-end">
               <button
                 type="button"
                 onClick={() => setAvisoInactividad(null)}
-                className="text-xs text-slate-400 hover:text-white px-2 py-1 transition-colors cursor-pointer"
+                className="text-xs font-bold px-4 py-1.5 bg-[#007DC5] hover:bg-[#034EA2] text-white rounded-lg transition-colors cursor-pointer"
               >
-                Entendido
+                Aceptar
               </button>
             </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setAvisoInactividad(null)}
-            className="text-slate-400 hover:text-white p-1 rounded-lg shrink-0 cursor-pointer"
-            aria-label="Cerrar aviso"
-          >
-            <X className="w-4 h-4" />
-          </button>
         </aside>
       )}
     </div>

@@ -1465,22 +1465,15 @@ export const VistaBoletinOficial: React.FC<VistaBoletinOficialProps> = ({
                 </ul>
               </div>
 
-              {/* Ruta de atención en caso de accidente escolar */}
-              <div className="p-4 rounded-xl bg-slate-900 text-white space-y-3">
+              {/* Ruta de atención en caso de accidente escolar y Póliza Destacada */}
+              <div className="p-4 sm:p-5 rounded-2xl bg-slate-900 text-white space-y-4 border border-slate-800 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-display font-bold uppercase tracking-wider text-sky-300">
+                  <span className="text-xs font-display font-extrabold uppercase tracking-wider text-sky-300 flex items-center gap-2">
+                    <ShieldAlert className="w-4 h-4 text-[#ED145B] shrink-0" />
                     Ruta Obligatoria ante Accidente o Lesión Escolar
                   </span>
-                  <a
-                    href={boletin.polizaEscolarDoc.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-[11px] font-bold text-[#ED145B] hover:underline inline-flex items-center gap-1"
-                  >
-                    Póliza <ExternalLink className="w-3 h-3" />
-                  </a>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   {boletin.pasosAccidenteEscolar.map((paso, idx) => (
                     <div
                       key={idx}
@@ -1495,6 +1488,34 @@ export const VistaBoletinOficial: React.FC<VistaBoletinOficialProps> = ({
                     </div>
                   ))}
                 </div>
+
+                {/* Tarjeta destacada de acceso directo a la Póliza Escolar Oficial */}
+                <a
+                  href={boletin.polizaEscolarDoc.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="group block rounded-xl bg-gradient-to-r from-[#ED145B] via-[#d81152] to-[#034EA2] p-0.5 shadow-md hover:shadow-lg transition-all"
+                >
+                  <div className="rounded-[10px] bg-slate-950/90 group-hover:bg-slate-950/75 px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-10 h-10 rounded-xl bg-[#ED145B]/20 border border-[#ED145B]/50 flex items-center justify-center text-[#ED145B] shrink-0">
+                        <FileText className="w-5 h-5 text-rose-400" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-[10px] font-extrabold uppercase tracking-wider text-amber-300">
+                          Documento Oficial de Consulta Inmediata
+                        </div>
+                        <div className="text-xs sm:text-sm font-bold text-white truncate">
+                          {boletin.polizaEscolarDoc.titulo}
+                        </div>
+                      </div>
+                    </div>
+                    <span className="px-3.5 py-2 rounded-lg bg-[#ED145B] group-hover:bg-[#ff1f6a] text-white text-xs font-extrabold inline-flex items-center justify-center gap-1.5 shrink-0 shadow-xs transition-colors">
+                      <span>Abrir Póliza Escolar</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </span>
+                  </div>
+                </a>
               </div>
             </div>
           </div>

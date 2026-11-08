@@ -161,9 +161,7 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
 
   const [catDoc, setCatDoc] = useState('');
   const [tituloDoc, setTituloDoc] = useState('');
-  const [urlDoc, setUrlDoc] = useState(
-    '/public/assets/aistudio/_NOTIPROFES_N__39_2026_.docx_a4a84a2d.pdf'
-  );
+  const [urlDoc, setUrlDoc] = useState('');
   const [tipoDoc, setTipoDoc] = useState<'docx' | 'xlsx' | 'pdf' | 'link'>('docx');
 
   // Estados independientes para Tarjeta 1: Proyección de Calendario de Finalización
@@ -492,6 +490,7 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
     if (exito) {
       setCatDoc('');
       setTituloDoc('');
+      setUrlDoc('');
       notificarGuardado('Documento institucional vinculado al boletín.');
     }
   };
@@ -1728,6 +1727,7 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
                   type="text"
                   value={urlDoc}
                   onChange={(e) => setUrlDoc(e.target.value)}
+                  placeholder="Pegue aquí el enlace de Google Drive o URL del documento..."
                   className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-mono-tabular text-slate-900"
                 />
               </div>

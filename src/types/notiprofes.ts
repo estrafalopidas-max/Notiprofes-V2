@@ -192,6 +192,7 @@ export interface UsuarioDirectivo {
   color: string;
   correo?: string;
   permisos?: PermisosUsuario;
+  tiempoInactividadMinutos?: number;
 }
 
 export interface PresenciaActiva {

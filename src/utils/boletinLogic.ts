@@ -2320,8 +2320,8 @@ export function generarHtmlPublicoBoletin(boletin: BoletinSemanal): string {
             .map((nota) => `<li><strong>Zona de acompañamiento:</strong> ${formatearTextoAHtmlSeguro(nota)}</li>`)
             .join('')}
         </ul>
-        <div style="margin-top: 18px; padding: 18px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 10px; font-size: 13px;">
-          <strong style="color: #034EA2;">Ruta obligatoria de atención ante dificultades de salud o lesión escolar:</strong>
+        <div style="margin-top: 18px; padding: 18px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 12px; font-size: 13px;">
+          <strong style="color: #034EA2; font-size: 13.5px; display: block; margin-bottom: 4px;">Ruta obligatoria de atención ante dificultades de salud o lesión escolar:</strong>
           <div class="pasos-grid">
             ${boletin.pasosAccidenteEscolar
               .map(
@@ -2333,11 +2333,30 @@ export function generarHtmlPublicoBoletin(boletin: BoletinSemanal): string {
               )
               .join('')}
           </div>
-          <div style="margin-top: 8px;"><strong>Póliza escolar oficial:</strong> <a style="color: #007DC5; font-weight: 700;" href="${escaparHtml(
-            boletin.polizaEscolarDoc.url
-          )}" target="_blank" rel="noopener noreferrer">${escaparHtml(
-            boletin.polizaEscolarDoc.titulo
-          )} →</a></div>
+
+          <a
+            href="${escaparHtml(boletin.polizaEscolarDoc.url)}"
+            target="_blank"
+            rel="noopener noreferrer"
+            style="margin-top: 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; border-radius: 12px; background: linear-gradient(135deg, #0F223D 0%, #034EA2 65%, #007DC5 100%); border: 2px solid #ED145B; color: #ffffff; text-decoration: none; box-shadow: 0 4px 12px rgba(3, 78, 162, 0.18);"
+          >
+            <div style="display: flex; align-items: center; gap: 12px; min-width: 0;">
+              <div style="width: 40px; height: 40px; border-radius: 10px; background: rgba(237, 20, 91, 0.22); border: 1px solid rgba(237, 20, 91, 0.65); display: flex; align-items: center; justify-content: center; flex-shrink: 0; font-size: 20px;">
+                🛡️
+              </div>
+              <div style="min-width: 0;">
+                <div style="font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em; color: #fde047;">
+                  Documento Oficial de Consulta Inmediata · Póliza Estudiantil
+                </div>
+                <div style="font-size: 14px; font-weight: 800; color: #ffffff; margin-top: 2px; word-break: break-word;">
+                  ${escaparHtml(boletin.polizaEscolarDoc.titulo)}
+                </div>
+              </div>
+            </div>
+            <span style="display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: 9px; background: #ED145B; color: #ffffff; font-weight: 800; font-size: 12.5px; white-space: nowrap; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);">
+              Abrir Póliza Escolar ↗
+            </span>
+          </a>
         </div>
       </div>
 

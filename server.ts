@@ -1229,12 +1229,13 @@ async function iniciarServidor() {
     verificarSesionDirectiva,
     verificarRolAdministrador,
     (req: RequestAutenticado, res) => {
-      const { nombre, cargo, rol, correo, pin } = req.body as {
+      const { nombre, cargo, rol, correo, pin, tiempoInactividadMinutos } = req.body as {
         nombre?: string;
         cargo?: string;
         rol?: RolUsuario;
         correo?: string;
         pin?: string;
+        tiempoInactividadMinutos?: number;
       };
 
       if (!nombre || !cargo || !pin || pin.trim().length < 4) {
@@ -1262,6 +1263,13 @@ async function iniciarServidor() {
       const color =
         paletaColores[usuariosRegistrados.length % paletaColores.length];
 
+      const minutosValidos =
+        typeof tiempoInactividadMinutos === 'number' &&
+        tiempoInactividadMinutos >= 0 &&
+        tiempoInactividadMinutos <= 1440
+          ? Math.round(tiempoInactividadMinutos)
+          : 15;
+
       const nuevoUsuario: UsuarioDirectivo = {
         id: nuevoId,
         usuario: nombre.trim().toLowerCase().replace(/\s+/g, '.'),
@@ -1271,6 +1279,7 @@ async function iniciarServidor() {
         color,
         correo: correo?.trim() || `${nuevoId}@ievillaflora.edu.co`,
         permisos: PERMISOS_POR_ROL[rolElegido],
+        tiempoInactividadMinutos: minutosValidos,
       };
 
       usuariosRegistrados.push(nuevoUsuario);
@@ -1295,12 +1304,13 @@ async function iniciarServidor() {
     verificarRolAdministrador,
     (req: RequestAutenticado, res) => {
       const { id } = req.params;
-      const { nombre, cargo, rol, correo, pin } = req.body as {
+      const { nombre, cargo, rol, correo, pin, tiempoInactividadMinutos } = req.body as {
         nombre?: string;
         cargo?: string;
         rol?: RolUsuario;
         correo?: string;
         pin?: string;
+        tiempoInactividadMinutos?: number;
       };
 
       const idx = usuariosRegistrados.findIndex((u) => u.id === id);
@@ -1312,6 +1322,13 @@ async function iniciarServidor() {
       const rolElegido: RolUsuario =
         rol && PERMISOS_POR_ROL[rol] ? rol : usuariosRegistrados[idx].rol;
 
+      const minutosValidos =
+        typeof tiempoInactividadMinutos === 'number' &&
+        tiempoInactividadMinutos >= 0 &&
+        tiempoInactividadMinutos <= 1440
+          ? Math.round(tiempoInactividadMinutos)
+          : (usuariosRegistrados[idx].tiempoInactividadMinutos ?? 15);
+
       usuariosRegistrados[idx] = {
         ...usuariosRegistrados[idx],
         nombre: nombre ? nombre.trim() : usuariosRegistrados[idx].nombre,
@@ -1320,12 +1337,24 @@ async function iniciarServidor() {
         correo:
           correo !== undefined ? correo.trim() : usuariosRegistrados[idx].correo,
         permisos: PERMISOS_POR_ROL[rolElegido],
+        tiempoInactividadMinutos: minutosValidos,
       };
 
       if (pin && pin.trim().length >= 4) {
         credencialesUsuarios[id] = generarHashPin(pin.trim());
         guardarCredenciales();
       }
+
+      // Actualizar también sesiones activas de este usuario en memoria
+      for (const [tk, ses] of sesionesDirectivas.entries()) {
+        if (ses.usuario.id === id) {
+          sesionesDirectivas.set(tk, {
+            ...ses,
+            usuario: usuariosRegistrados[idx],
+          });
+        }
+      }
+      guardarSesionesPersistidas();
 
       guardarUsuariosRegistrados();
       res.json({ ok: true, usuario: usuariosRegistrados[idx] });
