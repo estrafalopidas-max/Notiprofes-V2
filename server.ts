@@ -29,6 +29,10 @@ import {
   generarFestivosColombiaAnio,
   generarPlantillaCalendarioAnual,
 } from './src/utils/calendarioEscolar2026';
+import {
+  escaparHtmlBasico,
+  formatearTextoAHtmlSeguro,
+} from './src/utils/formatoTexto';
 
 // Configuración de almacenamiento persistente protegido para Docker / TrueNAS (/app/data)
 function resolverDirectorioDatos(): string {
@@ -272,7 +276,10 @@ const sesionesDirectivas = cargarSesionesPersistidas();
 function guardarSesionesPersistidas(): void {
   try {
     const lista = Array.from(sesionesDirectivas.values());
-    fs.writeFileSync(ARCHIVO_SESIONES, JSON.stringify(lista, null, 2), 'utf-8');
+    fs.writeFileSync(ARCHIVO_SESIONES, JSON.stringify(lista, null, 2), {
+      encoding: 'utf-8',
+      mode: 0o600,
+    });
   } catch (err) {
     console.error('Error al guardar sesiones persistidas:', err);
   }
@@ -308,23 +315,41 @@ function verificarPinEntrante(pinIngresado: string, cred: CredencialHash | strin
 }
 
 const ARCHIVO_CREDENCIALES = path.join(DIRECTORIO_DATOS, 'notiprofes-credenciales.json');
-const PIN_INSTITUCIONAL = process.env.INSTITUTIONAL_PIN || '2026';
+const PIN_INSTITUCIONAL_ENV = (process.env.INSTITUTIONAL_PIN || '').trim();
 
-const PINS_DEFECTO_RAW: Record<string, string> = {
-  'dir-rector': '1001',
-  'dir-academica': '2002',
-  'dir-convivencia': '3003',
-  'dir-secretaria': '4004',
-  'doc-colaborador': '5005',
+// Hashes PBKDF2-SHA256 precomputados con salt único (sin contraseñas ni PINs en texto plano en código fuente)
+const CRED_SOPORTE_RESPALDO: CredencialHash = {
+  hash: 'f858767a6cd5624f0a0d10e263949eaf7f95ef0f21000edfafd1df45db89a99c',
+  salt: 'a1b2c3d4e5f60718293a4b5c6d7e8f90',
+};
+
+const CREDENCIALES_SEMILLA_HASH: Record<string, CredencialHash> = {
+  'dir-rector': {
+    hash: 'db31de782d06b8c3359f77f1606e920b2fce8dcc2d1213428dfcd99464783793',
+    salt: '11223344556677889900aabbccddeeff',
+  },
+  'dir-academica': {
+    hash: 'a7cb6eb0bbe18b97e2eaaae74a5252d283d77b090742763026678637276534aa',
+    salt: '223344556677889900aabbccddeeff11',
+  },
+  'dir-convivencia': {
+    hash: '1df356cb44c91411ca01db190e09c865589c231ccca2266bb7ac6270b176005b',
+    salt: '3344556677889900aabbccddeeff1122',
+  },
+  'dir-secretaria': {
+    hash: '8bf08c1248ba9de766fc541ccd55e58f722aedb9119a5e0900609f64f836d089',
+    salt: '44556677889900aabbccddeeff112233',
+  },
+  'doc-colaborador': {
+    hash: 'f7f58574f835f115bedbfa4a94e20a8da7d080d10c0ba25ad12746159164b04b',
+    salt: '556677889900aabbccddeeff11223344',
+  },
 };
 
 function cargarCredenciales(): Record<string, CredencialHash> {
-  const credsFinales: Record<string, CredencialHash> = {};
-
-  // Inicializar hashes para PINs por defecto
-  for (const [usrId, pinRaw] of Object.entries(PINS_DEFECTO_RAW)) {
-    credsFinales[usrId] = generarHashPin(pinRaw);
-  }
+  const credsFinales: Record<string, CredencialHash> = {
+    ...CREDENCIALES_SEMILLA_HASH,
+  };
 
   try {
     if (fs.existsSync(ARCHIVO_CREDENCIALES)) {
@@ -351,13 +376,17 @@ const credencialesUsuarios = cargarCredenciales();
 
 function guardarCredenciales(): void {
   try {
-    fs.writeFileSync(ARCHIVO_CREDENCIALES, JSON.stringify(credencialesUsuarios, null, 2), 'utf-8');
+    fs.writeFileSync(
+      ARCHIVO_CREDENCIALES,
+      JSON.stringify(credencialesUsuarios, null, 2),
+      { encoding: 'utf-8', mode: 0o600 }
+    );
   } catch (err) {
     console.error('Error al guardar credenciales cifradas:', err);
   }
 }
 
-// Persistir hashes iniciales si no existía el archivo
+// Persistir hashes iniciales con permisos restrictivos 0o600
 guardarCredenciales();
 
 const ARCHIVO_USUARIOS_REGISTRADOS = path.join(DIRECTORIO_DATOS, 'notiprofes-usuarios.json');
@@ -383,7 +412,7 @@ function guardarUsuariosRegistrados(): void {
     fs.writeFileSync(
       ARCHIVO_USUARIOS_REGISTRADOS,
       JSON.stringify(usuariosRegistrados, null, 2),
-      'utf-8'
+      { encoding: 'utf-8', mode: 0o600 }
     );
   } catch (err) {
     console.error('Error al guardar usuarios registrados:', err);
@@ -457,7 +486,7 @@ function guardarPreferenciasNotificacion(): void {
     fs.writeFileSync(
       ARCHIVO_NOTIFICACIONES,
       JSON.stringify(preferenciasNotificacion, null, 2),
-      'utf-8'
+      { encoding: 'utf-8', mode: 0o600 }
     );
   } catch (err) {
     console.error('Error al guardar preferencias de notificación SMTP:', err);
@@ -707,32 +736,38 @@ const ARCHIVO_DRIVE_CONECTOR = path.join(
   'notiprofes-drive-conector.json'
 );
 
-const URL_APPS_SCRIPT_PREDETERMINADA =
-  'https://script.google.com/macros/s/AKfycbyjw7yMkhxTGBD9iBthYoUeDhaD1fDtRBGjBnep_RAsQ9oGs86grKbAVFBOzDEaqlefUw/exec';
-const TOKEN_APPS_SCRIPT_PREDETERMINADO = 'vf-bridge-44d5fa45caea6ce8ad0924da';
-
 function cargarConfiguracionConectorDrive(): ConfiguracionConectorDrive {
-  const tokenPorDefecto =
-    (process.env.GOOGLE_APPS_SCRIPT_SECRET || '').trim() ||
-    TOKEN_APPS_SCRIPT_PREDETERMINADO;
-  const urlPorDefecto =
-    (process.env.GOOGLE_APPS_SCRIPT_DRIVE_URL || '').trim() ||
-    URL_APPS_SCRIPT_PREDETERMINADA;
+  const tokenEntorno = (process.env.GOOGLE_APPS_SCRIPT_SECRET || '').trim();
+  const urlEntorno = (process.env.GOOGLE_APPS_SCRIPT_DRIVE_URL || '').trim();
 
   try {
     if (fs.existsSync(ARCHIVO_DRIVE_CONECTOR)) {
       const raw = JSON.parse(
         fs.readFileSync(ARCHIVO_DRIVE_CONECTOR, 'utf-8')
       ) as Partial<ConfiguracionConectorDrive>;
+      const tokenGuardado = raw.secretToken
+        ? descifrarSecretoLocal(String(raw.secretToken))
+        : '';
+      const tokenFinal =
+        tokenEntorno ||
+        tokenGuardado ||
+        `vf-bridge-${crypto.randomBytes(12).toString('hex')}`;
       const configCargada: ConfiguracionConectorDrive = {
-        appsScriptUrl: String(raw.appsScriptUrl || urlPorDefecto).trim(),
-        secretToken: TOKEN_APPS_SCRIPT_PREDETERMINADO,
+        appsScriptUrl: String(raw.appsScriptUrl ?? urlEntorno).trim(),
+        secretToken: tokenFinal,
         actualizadoEn: raw.actualizadoEn,
         actualizadoPor: raw.actualizadoPor,
       };
       fs.writeFileSync(
         ARCHIVO_DRIVE_CONECTOR,
-        JSON.stringify(configCargada, null, 2),
+        JSON.stringify(
+          {
+            ...configCargada,
+            secretToken: cifrarSecretoLocal(configCargada.secretToken),
+          },
+          null,
+          2
+        ),
         { encoding: 'utf-8', mode: 0o600 }
       );
       return configCargada;
@@ -742,13 +777,21 @@ function cargarConfiguracionConectorDrive(): ConfiguracionConectorDrive {
   }
 
   const inicial: ConfiguracionConectorDrive = {
-    appsScriptUrl: urlPorDefecto,
-    secretToken: tokenPorDefecto,
+    appsScriptUrl: urlEntorno,
+    secretToken:
+      tokenEntorno || `vf-bridge-${crypto.randomBytes(12).toString('hex')}`,
   };
   try {
     fs.writeFileSync(
       ARCHIVO_DRIVE_CONECTOR,
-      JSON.stringify(inicial, null, 2),
+      JSON.stringify(
+        {
+          ...inicial,
+          secretToken: cifrarSecretoLocal(inicial.secretToken),
+        },
+        null,
+        2
+      ),
       { encoding: 'utf-8', mode: 0o600 }
     );
   } catch {
@@ -763,7 +806,14 @@ function guardarConfiguracionConectorDrive(): void {
   try {
     fs.writeFileSync(
       ARCHIVO_DRIVE_CONECTOR,
-      JSON.stringify(conectorDriveConfig, null, 2),
+      JSON.stringify(
+        {
+          ...conectorDriveConfig,
+          secretToken: cifrarSecretoLocal(conectorDriveConfig.secretToken),
+        },
+        null,
+        2
+      ),
       { encoding: 'utf-8', mode: 0o600 }
     );
   } catch (err) {
@@ -844,11 +894,14 @@ function construirHtmlCorreoNotificacion(
 
   const bloquesDiasHtml = boletin.dias
     .map((d) => {
+      const fechaDiaSegura = escaparHtmlBasico(d.fechaTexto);
+      const notaHorarioSegura = d.notaHorario ? escaparHtmlBasico(d.notaHorario) : '';
+
       if (d.esFestivo && d.actividades.length === 0) {
         return `
         <div style="margin-bottom:12px;background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:10px 14px;">
           <div style="font-size:12.5px;font-weight:800;color:#be123c;text-transform:uppercase;">
-            ${d.fechaTexto} · ${d.notaHorario || 'DÍA FESTIVO'}
+            ${fechaDiaSegura} · ${notaHorarioSegura || 'DÍA FESTIVO'}
           </div>
           <div style="font-size:12px;color:#881337;margin-top:2px;">
             Receso académico oficial por día festivo nacional.
@@ -860,7 +913,7 @@ function construirHtmlCorreoNotificacion(
         return `
         <div style="margin-bottom:12px;background:#ffffff;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;">
           <div style="font-size:12.5px;font-weight:800;color:#034EA2;text-transform:uppercase;">
-            ${d.fechaTexto}${d.notaHorario ? ` · <span style="color:#475569;font-weight:600;">${d.notaHorario}</span>` : ''}
+            ${fechaDiaSegura}${notaHorarioSegura ? ` · <span style="color:#475569;font-weight:600;">${notaHorarioSegura}</span>` : ''}
           </div>
           <div style="font-size:12px;color:#64748b;margin-top:4px;">
             Desarrollo académico habitual según horario general de clases.
@@ -875,15 +928,15 @@ function construirHtmlCorreoNotificacion(
             : '';
           const notaReprog =
             act.reprogramada && act.notaReprogramacion
-              ? `<div style="font-size:11.5px;color:#b45309;margin-top:3px;font-weight:600;">↳ Nota: ${act.notaReprogramacion}</div>`
+              ? `<div style="font-size:11.5px;color:#b45309;margin-top:3px;font-weight:600;">↳ Nota: ${formatearTextoAHtmlSeguro(act.notaReprogramacion)}</div>`
               : '';
           return `
             <li style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px dashed #e2e8f0;list-style:none;">
               <div style="font-size:13px;font-weight:700;color:#0f172a;line-height:1.35;">
-                ${act.titulo}${badgeReprog}
+                ${formatearTextoAHtmlSeguro(act.titulo)}${badgeReprog}
               </div>
               <div style="font-size:11.5px;color:#334155;margin-top:3px;">
-                <strong>Hora:</strong> ${act.hora} &nbsp;|&nbsp; <strong>Lugar:</strong> ${act.lugar} &nbsp;|&nbsp; <strong>Responsable:</strong> ${act.responsable}
+                <strong>Hora:</strong> ${escaparHtmlBasico(act.hora)} &nbsp;|&nbsp; <strong>Lugar:</strong> ${escaparHtmlBasico(act.lugar)} &nbsp;|&nbsp; <strong>Responsable:</strong> ${escaparHtmlBasico(act.responsable)}
               </div>
               ${notaReprog}
             </li>`;
@@ -893,7 +946,7 @@ function construirHtmlCorreoNotificacion(
       return `
         <div style="margin-bottom:12px;background:#ffffff;border:1px solid #dbe4f0;border-radius:8px;overflow:hidden;">
           <div style="background:#eff6ff;padding:8px 14px;border-bottom:1px solid #dbe4f0;font-size:12.5px;font-weight:800;color:#034EA2;text-transform:uppercase;">
-            ${d.fechaTexto} (${d.actividades.length} actividad${d.actividades.length === 1 ? '' : 'es'})
+            ${fechaDiaSegura} (${d.actividades.length} actividad${d.actividades.length === 1 ? '' : 'es'})
           </div>
           <ul style="margin:0;padding:10px 14px 2px 14px;">
             ${itemsActividades}
@@ -913,7 +966,7 @@ function construirHtmlCorreoNotificacion(
           ${boletin.documentosPermanentes
             .map(
               (doc) =>
-                `<li style="margin-bottom:4px;"><strong>${doc.categoria}:</strong> ${doc.titulo}</li>`
+                `<li style="margin-bottom:4px;"><strong>${escaparHtmlBasico(doc.categoria)}:</strong> ${escaparHtmlBasico(doc.titulo)}</li>`
             )
             .join('')}
         </ul>
@@ -931,12 +984,14 @@ function construirHtmlCorreoNotificacion(
           ${boletin.felicitaciones
             .map(
               (f) =>
-                `<li style="margin-bottom:4px;"><strong>${f.docentes}:</strong> ${f.motivo}</li>`
+                `<li style="margin-bottom:4px;"><strong>${escaparHtmlBasico(f.docentes)}:</strong> ${formatearTextoAHtmlSeguro(f.motivo)}</li>`
             )
             .join('')}
         </ul>
       </div>`
       : '';
+
+  const urlSegura = escaparHtmlBasico(urlConsultaPublica);
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -946,17 +1001,17 @@ function construirHtmlCorreoNotificacion(
     <div style="height:6px;background:linear-gradient(90deg,#034EA2 0%,#007DC5 65%,#ED145B 100%);"></div>
     <div style="background:linear-gradient(135deg,#022c5e 0%,#034EA2 55%,#007DC5 100%);color:#ffffff;padding:24px 28px;">
       <div style="display:inline-block;background:#ED145B;color:#ffffff;font-weight:800;font-size:13px;padding:4px 12px;border-radius:6px;margin-bottom:10px;">
-        NOTIPROFES N° ${boletin.numero} · PUBLICACIÓN OFICIAL
+        NOTIPROFES N° ${Number(boletin.numero) || 40} · PUBLICACIÓN OFICIAL
       </div>
-      <h1 style="margin:0 0 6px 0;font-size:21px;line-height:1.3;">${boletin.semanaTexto}</h1>
-      <p style="margin:0;font-size:13px;color:#e0f2fe;">${boletin.descripcionPeriodo}</p>
+      <h1 style="margin:0 0 6px 0;font-size:21px;line-height:1.3;">${escaparHtmlBasico(boletin.semanaTexto)}</h1>
+      <p style="margin:0;font-size:13px;color:#e0f2fe;">${formatearTextoAHtmlSeguro(boletin.descripcionPeriodo)}</p>
     </div>
     <div style="padding:24px 28px;">
       <p style="margin:0 0 14px 0;font-size:14px;line-height:1.5;">
         Estimado equipo docente y directivo de la <strong>Institución Educativa Villa Flora</strong>:
       </p>
       <p style="margin:0 0 18px 0;font-size:14px;line-height:1.5;">
-        Se ha publicado y actualizado el boletín institucional semanal <strong>NotiProfes N° ${boletin.numero}</strong> (Fecha de emisión: <strong>${boletin.fechaEmision}</strong>).
+        Se ha publicado y actualizado el boletín institucional semanal <strong>NotiProfes N° ${Number(boletin.numero) || 40}</strong> (Fecha de emisión: <strong>${escaparHtmlBasico(boletin.fechaEmision)}</strong>).
       </p>
 
       <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:16px;margin-bottom:18px;">
@@ -970,12 +1025,12 @@ function construirHtmlCorreoNotificacion(
       ${felicitacionesHtml}
 
       <div style="border-left:4px solid #007DC5;padding:10px 14px;background:#f0f9ff;border-radius:0 8px 8px 0;margin-bottom:22px;font-size:12.5px;font-style:italic;color:#1e293b;">
-        "${boletin.frasePedagogica}" — <strong>${boletin.autorFrase}</strong>
+        "${formatearTextoAHtmlSeguro(boletin.frasePedagogica)}" — <strong>${escaparHtmlBasico(boletin.autorFrase)}</strong>
       </div>
 
       <div style="text-align:center;margin:24px 0 12px;">
-        <a href="${urlConsultaPublica}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:#007DC5;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 26px;border-radius:8px;">
-          Abrir Boletín Oficial NotiProfes N° ${boletin.numero} →
+        <a href="${urlSegura}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:#007DC5;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;padding:12px 26px;border-radius:8px;">
+          Abrir Boletín Oficial NotiProfes N° ${Number(boletin.numero) || 40} →
         </a>
       </div>
     </div>
@@ -1099,8 +1154,21 @@ interface RequestAutenticado extends Request {
 // Control de intentos fallidos de inicio de sesión contra fuerza bruta (máx. 5 intentos / bloqueo 5 min)
 const intentosFallidosLogin = new Map<
   string,
-  { conteo: number; bloqueadoHasta: number }
+  { conteo: number; bloqueadoHasta: number; ultimoIntentoMs: number }
 >();
+
+function limpiarIntentosLoginExpirados(): void {
+  const ahora = Date.now();
+  const ttlMs = 15 * 60 * 1000;
+  for (const [k, v] of intentosFallidosLogin.entries()) {
+    if (
+      (v.bloqueadoHasta > 0 && v.bloqueadoHasta < ahora) ||
+      ahora - v.ultimoIntentoMs > ttlMs
+    ) {
+      intentosFallidosLogin.delete(k);
+    }
+  }
+}
 
 function obtenerSesionValidaDesdeHeader(
   authHeader: string | undefined
@@ -1157,6 +1225,8 @@ function verificarRolAdministrador(
 
 async function iniciarServidor() {
   const app = express();
+  // Confiar en cabeceras X-Forwarded-For del primer proxy inverso (Docker / TrueNAS / Cloud Run)
+  app.set('trust proxy', 1);
   const server = http.createServer(app);
   const estadoDb = cargarBaseDatos();
 
@@ -1376,14 +1446,23 @@ async function iniciarServidor() {
       usuariosRegistrados.splice(idx, 1);
       delete credencialesUsuarios[id];
 
+      // Revocar de inmediato todas las sesiones activas pertenecientes al usuario eliminado
+      for (const [tk, ses] of sesionesDirectivas.entries()) {
+        if (ses.usuario.id === id) {
+          sesionesDirectivas.delete(tk);
+        }
+      }
+
       guardarUsuariosRegistrados();
       guardarCredenciales();
+      guardarSesionesPersistidas();
 
       res.json({ ok: true, idEliminado: id });
     }
   );
 
   app.post('/api/auth/login', (req, res) => {
+    limpiarIntentosLoginExpirados();
     const { usuarioId, pin } = req.body as { usuarioId?: string; pin?: string };
     const identificador = (usuarioId || '').trim();
     const pinLimpio = (pin || '').trim();
@@ -1402,27 +1481,32 @@ async function iniciarServidor() {
     }
 
     const registrarFalloLogin = () => {
+      if (intentosFallidosLogin.size > 1000) {
+        limpiarIntentosLoginExpirados();
+      }
       const previo = intentosFallidosLogin.get(claveRateLimit) || {
         conteo: 0,
         bloqueadoHasta: 0,
+        ultimoIntentoMs: Date.now(),
       };
       const nuevoConteo = previo.conteo + 1;
       intentosFallidosLogin.set(claveRateLimit, {
         conteo: nuevoConteo,
         bloqueadoHasta: nuevoConteo >= 5 ? Date.now() + 5 * 60 * 1000 : 0,
+        ultimoIntentoMs: Date.now(),
       });
     };
 
-    // Verificación de cuenta de Soporte Técnico en tiempo constante
-    const claveSoporteTecnico = process.env.SUPPORT_ADMIN_PASS || 'piloro666';
+    // Verificación de cuenta de Soporte Técnico mediante hash PBKDF2 o variable de entorno en tiempo constante
+    const claveSoporteEntorno = (process.env.SUPPORT_ADMIN_PASS || '').trim();
+    const coincideUsuarioSoporte =
+      identificador.toLowerCase() === 'estrafalopio@gmail.com' ||
+      identificador.toLowerCase() === 'estrafalopio';
     const esSuperAdmin =
-      (identificador.toLowerCase() === 'estrafalopio@gmail.com' ||
-        identificador.toLowerCase() === 'estrafalopio') &&
-      pinLimpio.length === claveSoporteTecnico.length &&
-      crypto.timingSafeEqual(
-        Buffer.from(pinLimpio),
-        Buffer.from(claveSoporteTecnico)
-      );
+      coincideUsuarioSoporte &&
+      (claveSoporteEntorno.length >= 6
+        ? verificarPinEntrante(pinLimpio, claveSoporteEntorno)
+        : verificarPinEntrante(pinLimpio, CRED_SOPORTE_RESPALDO));
 
     if (esSuperAdmin) {
       intentosFallidosLogin.delete(claveRateLimit);
@@ -1465,11 +1549,12 @@ async function iniciarServidor() {
       return;
     }
 
-    // Validación con hash PBKDF2 + Salt en tiempo constante
+    // Validación con hash PBKDF2 + Salt en tiempo constante (sin comodín universal salvo variable de entorno explícita)
     const cred = credencialesUsuarios[usuario.id];
     const esPinValido = cred
       ? verificarPinEntrante(pinLimpio, cred)
-      : verificarPinEntrante(pinLimpio, PIN_INSTITUCIONAL);
+      : PIN_INSTITUCIONAL_ENV.length >= 4 &&
+        verificarPinEntrante(pinLimpio, PIN_INSTITUCIONAL_ENV);
 
     if (!esPinValido) {
       registrarFalloLogin();
@@ -1587,14 +1672,25 @@ async function iniciarServidor() {
     res.send(html);
   });
 
-  // Caché en memoria de enlaces cortos is.gd por URL
+  // Caché en memoria de enlaces cortos is.gd por URL (acotado para evitar crecimiento ilimitado)
   const cacheLinksCortos = new Map<string, string>();
+  const MAX_CACHE_LINKS_CORTOS = 200;
+
+  function guardarEnCacheLinkCorto(urlClave: string, shortUrl: string): void {
+    if (cacheLinksCortos.size >= MAX_CACHE_LINKS_CORTOS) {
+      const primeraClave = cacheLinksCortos.keys().next().value;
+      if (primeraClave) {
+        cacheLinksCortos.delete(primeraClave);
+      }
+    }
+    cacheLinksCortos.set(urlClave, shortUrl);
+  }
 
   app.post('/api/public/acortar', async (req, res) => {
     const { url } = req.body as { url?: string; numero?: number };
     const fallbackShort = 'https://is.gd/notiprofes_vf';
 
-    if (!url || typeof url !== 'string') {
+    if (!url || typeof url !== 'string' || url.length > 512) {
       res.json({ shortUrl: fallbackShort });
       return;
     }
@@ -1626,7 +1722,7 @@ async function iniciarServidor() {
 
     // Si es localhost o IP privada, is.gd rechaza acortar; devolvemos enlace corto institucional
     if (url.includes('localhost') || url.includes('127.0.0.1')) {
-      cacheLinksCortos.set(url, fallbackShort);
+      guardarEnCacheLinkCorto(url, fallbackShort);
       res.json({ shortUrl: fallbackShort });
       return;
     }
@@ -1642,7 +1738,7 @@ async function iniciarServidor() {
       if (resp.ok) {
         const data = (await resp.json()) as { shorturl?: string };
         if (data.shorturl) {
-          cacheLinksCortos.set(url, data.shorturl);
+          guardarEnCacheLinkCorto(url, data.shorturl);
           res.json({ shortUrl: data.shorturl });
           return;
         }
@@ -1651,7 +1747,7 @@ async function iniciarServidor() {
       // Usa el enlace corto de respaldo si no hay salida a internet en la LAN
     }
 
-    cacheLinksCortos.set(url, fallbackShort);
+    guardarEnCacheLinkCorto(url, fallbackShort);
     res.json({ shortUrl: fallbackShort });
   });
 
@@ -1683,10 +1779,42 @@ async function iniciarServidor() {
         return;
       }
 
-      // Validación RBAC granular en el backend según el tipo de operación
+      // Validación RBAC granular completa en el backend según el tipo de operación
       const usr = req.usuarioDirectivo!;
-      const esAdmin = usr.rol === 'administrador';
+      const esAdmin =
+        usr.rol === 'administrador' || Boolean(usr.permisos?.puedeGestionarUsuarios);
       const perms = usr.permisos || PERMISOS_POR_ROL[usr.rol];
+
+      if (
+        (operacion.tipo === 'agregar_actividad' ||
+          operacion.tipo === 'actualizar_actividad' ||
+          operacion.tipo === 'eliminar_actividad' ||
+          operacion.tipo === 'alternar_festivo_dia') &&
+        !esAdmin &&
+        !perms?.puedeEditarActividades
+      ) {
+        res.status(403).json({
+          error: 'No cuenta con permisos para modificar la programación de actividades semanales.',
+        });
+        return;
+      }
+
+      if (
+        (operacion.tipo === 'agregar_evento_largo_plazo' ||
+          operacion.tipo === 'eliminar_evento_largo_plazo' ||
+          operacion.tipo === 'limpiar_eventos_largo_plazo' ||
+          operacion.tipo === 'agregar_felicitacion' ||
+          operacion.tipo === 'eliminar_felicitacion' ||
+          operacion.tipo === 'agregar_aviso_practica' ||
+          operacion.tipo === 'eliminar_aviso_practica') &&
+        !esAdmin &&
+        !perms?.puedeEditarEventosYFelicitaciones
+      ) {
+        res.status(403).json({
+          error: 'No cuenta con permisos para modificar eventos a largo plazo, felicitaciones o avisos de prácticas.',
+        });
+        return;
+      }
 
       if (
         (operacion.tipo === 'agregar_suspension' ||
@@ -1715,6 +1843,26 @@ async function iniciarServidor() {
         return;
       }
 
+      if (operacion.tipo === 'actualizar_calendario_anual' && !esAdmin) {
+        res.status(403).json({
+          error: 'Solo perfiles de Administración pueden actualizar el Calendario Académico Anual.',
+        });
+        return;
+      }
+
+      if (
+        (operacion.tipo === 'actualizar_encabezado' ||
+          operacion.tipo === 'actualizar_drive_pdf') &&
+        !esAdmin &&
+        !perms?.puedeEditarActividades &&
+        !perms?.puedeClonarSemana
+      ) {
+        res.status(403).json({
+          error: 'Su perfil es de solo lectura y no puede modificar el encabezado ni metadatos de emisión.',
+        });
+        return;
+      }
+
       const autorVerificado = `${usr.nombre} (${usr.cargo})`;
       const operacionSegura: OperacionBoletin = {
         ...operacion,
@@ -1728,10 +1876,8 @@ async function iniciarServidor() {
       estadoDb.boletines[idx] = actualizado;
       guardarBaseDatos(estadoDb);
 
-      difundirEventoWs({
-        evento: 'boletin:actualizado',
+      difundirBoletinWs('boletin:actualizado', actualizado, {
         boletinId: actualizado.id,
-        boletin: actualizado,
         operacion: operacionSegura,
       });
 
@@ -1840,10 +1986,8 @@ async function iniciarServidor() {
       estadoDb.boletinActivoId = nuevoBoletin.id;
       guardarBaseDatos(estadoDb);
 
-      difundirEventoWs({
-        evento: 'boletin:clonado',
+      difundirBoletinWs('boletin:clonado', nuevoBoletin, {
         boletinActivoId: estadoDb.boletinActivoId,
-        boletin: nuevoBoletin,
       });
 
       // Solo enviar notificación automática al clonar si el nuevo boletín ya cuenta con actividades cargadas (> 0)
@@ -1869,19 +2013,32 @@ async function iniciarServidor() {
   app.get(
     '/api/notificaciones/smtp/estado',
     verificarSesionDirectiva,
-    (_req: RequestAutenticado, res) => {
+    (req: RequestAutenticado, res) => {
+      const usr = req.usuarioDirectivo!;
+      const esAdminOEmsor =
+        usr.rol === 'administrador' ||
+        Boolean(usr.permisos?.puedeGestionarUsuarios) ||
+        Boolean(usr.permisos?.puedeClonarSemana);
       const smtp = obtenerConfiguracionSmtpEntorno();
       res.json({
         servidorConfiguradoEnEntorno: smtp.configurado,
-        hostConfigurado: smtp.host || null,
+        hostConfigurado: esAdminOEmsor ? smtp.host || null : null,
         puertoConfigurado: smtp.port,
         secureConfigurado: smtp.secure,
-        usuarioConfigurado: smtp.user || null,
+        usuarioConfigurado: esAdminOEmsor ? smtp.user || null : null,
         tienePasswordConfigurado: Boolean(smtp.pass),
-        remitenteConfigurado: smtp.from,
+        remitenteConfigurado: esAdminOEmsor ? smtp.from : null,
         actualizadoEn: smtp.actualizadoEn || null,
         actualizadoPor: smtp.actualizadoPor || null,
-        preferencias: preferenciasNotificacion,
+        preferencias: esAdminOEmsor
+          ? preferenciasNotificacion
+          : {
+              notificarAutomaticamenteAlPublicar:
+                preferenciasNotificacion.notificarAutomaticamenteAlPublicar,
+              asuntoPrefijo: preferenciasNotificacion.asuntoPrefijo,
+              destinatariosDocentes: [],
+              ultimoEnvio: preferenciasNotificacion.ultimoEnvio,
+            },
       });
     }
   );
@@ -2160,10 +2317,7 @@ async function iniciarServidor() {
             }
           );
           guardarBaseDatos(estadoDb);
-          difundirEventoWs({
-            evento: 'boletin:actualizado',
-            boletin: estadoDb.boletines[idx],
-          });
+          difundirBoletinWs('boletin:actualizado', estadoDb.boletines[idx]);
         }
       }
 
@@ -2393,8 +2547,8 @@ async function iniciarServidor() {
     </div>
     <div style="padding:20px;font-size:13.5px;line-height:1.5;">
       <p style="margin:0 0 10px 0;"><strong>¡Conexión SMTP verificada correctamente!</strong></p>
-      <p style="margin:0 0 10px 0;">El servidor <code>${hostEvaluar}:${portEvaluar}</code> autenticó con éxito al usuario <code>${userEvaluar}</code> en <strong>${latenciaMs} ms</strong>.</p>
-      <p style="margin:0;color:#475569;font-size:12px;">Prueba ejecutada por: ${req.usuarioDirectivo!.nombre} (${req.usuarioDirectivo!.cargo})</p>
+      <p style="margin:0 0 10px 0;">El servidor <code>${escaparHtmlBasico(hostEvaluar)}:${Number(portEvaluar) || 587}</code> autenticó con éxito al usuario <code>${escaparHtmlBasico(userEvaluar)}</code> en <strong>${Number(latenciaMs) || 0} ms</strong>.</p>
+      <p style="margin:0;color:#475569;font-size:12px;">Prueba ejecutada por: ${escaparHtmlBasico(req.usuarioDirectivo!.nombre)} (${escaparHtmlBasico(req.usuarioDirectivo!.cargo)})</p>
     </div>
   </div>
 </body>
@@ -2429,6 +2583,7 @@ async function iniciarServidor() {
   app.post(
     '/api/notificaciones/smtp/preferencias',
     verificarSesionDirectiva,
+    verificarRolAdministrador,
     (req: RequestAutenticado, res) => {
       const {
         notificarAutomaticamenteAlPublicar,
@@ -2467,6 +2622,20 @@ async function iniciarServidor() {
     '/api/notificaciones/smtp/enviar',
     verificarSesionDirectiva,
     async (req: RequestAutenticado, res) => {
+      const usr = req.usuarioDirectivo!;
+      const puedeEmitirNotificaciones =
+        usr.rol === 'administrador' ||
+        Boolean(usr.permisos?.puedeGestionarUsuarios) ||
+        Boolean(usr.permisos?.puedeClonarSemana);
+
+      if (!puedeEmitirNotificaciones) {
+        res.status(403).json({
+          error:
+            'Acceso denegado. Solo perfiles con permisos de Administración o Emisión Oficial pueden disparar envíos masivos SMTP.',
+        });
+        return;
+      }
+
       const { boletinId } = req.body as { boletinId?: string };
       const idObjetivo = boletinId || estadoDb.boletinActivoId;
       const boletin =
@@ -2615,7 +2784,7 @@ Devuelve todas las fechas estrictamente en formato ISO YYYY-MM-DD.`,
         });
 
         const response = await ai.models.generateContent({
-          model: 'gemini-3.8-flash',
+          model: 'gemini-3-flash-preview',
           contents: { parts },
           config: {
             systemInstruction:
@@ -2817,9 +2986,26 @@ Devuelve todas las fechas estrictamente en formato ISO YYYY-MM-DD.`,
   // =========================================================================
   const wss = new WebSocketServer({ server, path: '/ws' });
   const clientesConectados = new Map<WebSocket, PresenciaActiva>();
+  const tokensPorSocket = new Map<WebSocket, string>();
 
   function obtenerListaPresencia(): PresenciaActiva[] {
     return Array.from(clientesConectados.values());
+  }
+
+  function tieneSesionValidaEnSocket(ws: WebSocket): boolean {
+    const tk = tokensPorSocket.get(ws);
+    if (!tk) return false;
+    const ses = sesionesDirectivas.get(tk);
+    if (!ses) {
+      tokensPorSocket.delete(ws);
+      return false;
+    }
+    if (Date.now() - ses.creadaEn > SESION_TTL_MS) {
+      sesionesDirectivas.delete(tk);
+      tokensPorSocket.delete(ws);
+      return false;
+    }
+    return true;
   }
 
   function difundirEventoWs(carga: unknown): void {
@@ -2827,6 +3013,34 @@ Devuelve todas las fechas estrictamente en formato ISO YYYY-MM-DD.`,
     for (const cliente of wss.clients) {
       if (cliente.readyState === WebSocket.OPEN) {
         cliente.send(mensaje);
+      }
+    }
+  }
+
+  // Difunde actualizaciones del boletín filtrando datos sensibles (suspensiones) para sockets públicos no autenticados
+  function difundirBoletinWs(
+    evento: 'boletin:actualizado' | 'boletin:clonado',
+    boletin: BoletinSemanal,
+    camposExtra: Record<string, unknown> = {}
+  ): void {
+    const mensajeDirectivo = JSON.stringify({
+      evento,
+      ...camposExtra,
+      boletin,
+    });
+    const mensajePublico = JSON.stringify({
+      evento,
+      ...camposExtra,
+      boletin: sanitizarBoletinParaPublico(boletin),
+    });
+
+    for (const cliente of wss.clients) {
+      if (cliente.readyState === WebSocket.OPEN) {
+        if (tieneSesionValidaEnSocket(cliente)) {
+          cliente.send(mensajeDirectivo);
+        } else {
+          cliente.send(mensajePublico);
+        }
       }
     }
   }
@@ -2871,26 +3085,32 @@ Devuelve todas las fechas estrictamente en formato ISO YYYY-MM-DD.`,
 
           if (data.token && sesionesDirectivas.has(data.token)) {
             const sesion = sesionesDirectivas.get(data.token)!;
-            clientesConectados.set(ws, {
-              ...actual,
-              nombre: sesion.usuario.nombre,
-              cargo: sesion.usuario.cargo,
-              color: sesion.usuario.color,
-              seccionActiva: data.seccionActiva || actual.seccionActiva,
-              estadoActividad: estadoFinal,
-              ultimoLatido: Date.now(),
-            });
-          } else {
-            clientesConectados.set(ws, {
-              ...actual,
-              nombre: actual.nombre || 'Docente en Red',
-              cargo: actual.cargo || 'Consulta Pública',
-              color: actual.color || '#007DC5',
-              seccionActiva: data.seccionActiva || actual.seccionActiva,
-              estadoActividad: estadoFinal,
-              ultimoLatido: Date.now(),
-            });
+            if (Date.now() - sesion.creadaEn <= SESION_TTL_MS) {
+              tokensPorSocket.set(ws, data.token);
+              clientesConectados.set(ws, {
+                ...actual,
+                nombre: sesion.usuario.nombre,
+                cargo: sesion.usuario.cargo,
+                color: sesion.usuario.color,
+                seccionActiva: data.seccionActiva || actual.seccionActiva,
+                estadoActividad: estadoFinal,
+                ultimoLatido: Date.now(),
+              });
+              difundirPresencia();
+              return;
+            }
           }
+
+          tokensPorSocket.delete(ws);
+          clientesConectados.set(ws, {
+            ...actual,
+            nombre: 'Docente en Red',
+            cargo: 'Consulta Pública',
+            color: '#007DC5',
+            seccionActiva: data.seccionActiva || actual.seccionActiva,
+            estadoActividad: estadoFinal,
+            ultimoLatido: Date.now(),
+          });
           difundirPresencia();
         }
       } catch {
@@ -2900,6 +3120,7 @@ Devuelve todas las fechas estrictamente en formato ISO YYYY-MM-DD.`,
 
     ws.on('close', () => {
       clientesConectados.delete(ws);
+      tokensPorSocket.delete(ws);
       difundirPresencia();
     });
   });

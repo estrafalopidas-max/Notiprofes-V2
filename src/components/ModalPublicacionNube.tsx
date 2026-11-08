@@ -40,7 +40,7 @@ import {
 // Genera el código listo para copiar y pegar en https://script.google.com con llave de seguridad integrada
 function construirCodigoAppsScriptPuente(secretToken: string): string {
   const tokenSeguro =
-    (secretToken || 'vf-bridge-44d5fa45caea6ce8ad0924da').replace(/['"\\]/g, '');
+    (secretToken || 'TOKEN_GENERADO_POR_SERVIDOR_TRUENAS').replace(/['"\\]/g, '');
   return `// PUENTE GRATUITO NOTIPROFES -> GOOGLE DRIVE (SIN GOOGLE CLOUD CONSOLE)
 // 1. Pega este código en https://script.google.com
 // 2. Arriba en la barra, selecciona "autorizarDrive" y pulsa "▷ Ejecutar" para aceptar los permisos de Drive
