@@ -2272,10 +2272,10 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
               <CalendarDays className="w-4 h-4 text-[#034EA2]" />
               <div>
                 <h3 className="text-sm font-display font-bold text-slate-900">
-                  Gestión Separada de Cronograma a Largo Plazo ({boletin.proyeccionCalendario.length} registros totales)
+                  Gestión de Cronograma a Largo Plazo ({boletin.proyeccionCalendario.length} registros totales)
                 </h3>
                 <p className="text-[11px] text-slate-500">
-                  Cada tarjeta alimenta directamente su bloque respectivo en el Boletín Oficial y en el HTML público, sin necesidad de cambiar menús desplegables.
+                  Cada tarjeta alimenta directamente su bloque respectivo en el Boletín Oficial y en el HTML público.
                 </p>
               </div>
             </div>
