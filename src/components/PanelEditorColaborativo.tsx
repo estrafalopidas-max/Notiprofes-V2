@@ -248,7 +248,7 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
   >(null);
 
   const [polizaTitulo, setPolizaTitulo] = useState(boletin.polizaEscolarDoc?.titulo || '');
-  const [polizaUrl, setPolizaUrl] = useState(boletin.polizaEscolarDoc?.url || '');
+  const [polizaUrl, setPolizaUrl] = useState('');
 
   const [frasePedagogicaEdit, setFrasePedagogicaEdit] = useState(boletin.frasePedagogica || '');
   const [autorFraseEdit, setAutorFraseEdit] = useState(boletin.autorFrase || '');
@@ -517,6 +517,7 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
     });
 
     if (exito) {
+      setPolizaUrl('');
       notificarGuardado('Póliza escolar oficial actualizada con éxito.');
     }
   };
