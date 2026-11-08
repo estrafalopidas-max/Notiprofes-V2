@@ -1661,6 +1661,7 @@ async function iniciarServidor() {
 
       if (
         (operacion.tipo === 'agregar_suspension' ||
+          operacion.tipo === 'agregar_suspensiones_lote' ||
           operacion.tipo === 'eliminar_suspension' ||
           operacion.tipo === 'limpiar_suspensiones') &&
         !esAdmin &&

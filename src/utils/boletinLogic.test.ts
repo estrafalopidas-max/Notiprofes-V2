@@ -221,3 +221,33 @@ test('formatearTextoAHtmlSeguro convierte formato ligero a HTML seguro y escapa 
   assert.ok(!plano.includes('=='));
 });
 
+test('parsearPegadoSuspensiones y agregar_suspensiones_lote procesan tablas de Excel/Word en lote', async () => {
+  const { parsearPegadoSuspensiones } = await import('./boletinLogic');
+  const textoExcel = [
+    'Grado\tEstudiante\tFecha de suspensión',
+    '7°1\tGómez Pérez Mariana\t10 y 11 de noviembre',
+    '9°3\tRestrepo Cano Mateo\t12 de noviembre',
+    '10°2\tVilla Londoño Valentina\t11, 12 y 13 de noviembre',
+  ].join('\n');
+
+  const filas = parsearPegadoSuspensiones(textoExcel);
+  assert.equal(filas.length, 3);
+  assert.equal(filas[0].grado, '7°1');
+  assert.equal(filas[0].estudiante, 'Gómez Pérez Mariana');
+  assert.equal(filas[2].fechaSuspension, '11, 12 y 13 de noviembre');
+
+  const cantInicial = BOLETIN_40_SEED.suspensiones.length;
+  const actualizado = aplicarOperacionBoletin(BOLETIN_40_SEED, {
+    tipo: 'agregar_suspensiones_lote',
+    suspensiones: filas.map((f, i) => ({
+      id: `susp-lote-${i}`,
+      ...f,
+    })),
+    autor: 'Diana Patricia Giraldo Benjumea',
+  });
+
+  assert.equal(actualizado.suspensiones.length, cantInicial + 3);
+  assert.ok(actualizado.historialCambios[0].descripcion.includes('3 suspensiones en lote'));
+});
+
+

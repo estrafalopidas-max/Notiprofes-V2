@@ -280,6 +280,11 @@ export type OperacionBoletin =
       autor: string;
     }
   | {
+      tipo: 'agregar_suspensiones_lote';
+      suspensiones: SuspensionEstudiante[];
+      autor: string;
+    }
+  | {
       tipo: 'eliminar_suspension';
       suspensionId: string;
       autor: string;

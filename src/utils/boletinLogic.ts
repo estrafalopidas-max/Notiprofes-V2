@@ -238,6 +238,70 @@ export function validarActividadInput(datos: {
 }
 
 /**
+ * Interpreta un bloque de texto copiado desde Excel o una tabla de Word (separado por tabulaciones, barras o punto y coma)
+ * y devuelve un arreglo de filas { grado, estudiante, fechaSuspension }.
+ */
+export function parsearPegadoSuspensiones(
+  textoPegado: string
+): Array<{ grado: string; estudiante: string; fechaSuspension: string }> {
+  if (!textoPegado || !textoPegado.trim()) return [];
+
+  const lineas = textoPegado
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+
+  const resultado: Array<{ grado: string; estudiante: string; fechaSuspension: string }> = [];
+
+  for (const linea of lineas) {
+    let columnas: string[] = [];
+
+    if (linea.includes('\t')) {
+      columnas = linea.split('\t').map((c) => c.trim());
+    } else if (linea.includes('|')) {
+      columnas = linea
+        .split('|')
+        .map((c) => c.trim())
+        .filter((_, idx, arr) => !(idx === 0 && arr[0] === '') && !(idx === arr.length - 1 && arr[arr.length - 1] === ''));
+    } else if (linea.includes(';')) {
+      columnas = linea.split(';').map((c) => c.trim());
+    } else {
+      // Soportar líneas con guion largo o separador doble espacio: "6°2 - Pérez Juan - 5 y 6 de noviembre"
+      const partesGuion = linea.split(/\s+[-–—]\s+/);
+      if (partesGuion.length >= 3) {
+        columnas = partesGuion.map((c) => c.trim());
+      }
+    }
+
+    if (columnas.length >= 2) {
+      const col0 = (columnas[0] || '').replace(/^["']|["']$/g, '').trim();
+      const col1 = (columnas[1] || '').replace(/^["']|["']$/g, '').trim();
+      const col2 = columnas
+        .slice(2)
+        .join(' ')
+        .replace(/^["']|["']$/g, '')
+        .trim();
+
+      // Ignorar fila de encabezado si el usuario copió los títulos de la tabla ("Grado | Estudiante | Fecha...")
+      const esEncabezado =
+        /^grado$/i.test(col0) &&
+        /(estudiante|nombre|apellido|alumno)/i.test(col1);
+
+      if (!esEncabezado && (col0 || col1 || col2)) {
+        resultado.push({
+          grado: col0,
+          estudiante: col1,
+          fechaSuspension: col2,
+        });
+      }
+    }
+  }
+
+  return resultado;
+}
+
+
+/**
  * Aplica una operación colaborativa de forma idempotente sobre el estado del boletín.
  */
 export function aplicarOperacionBoletin(
@@ -417,6 +481,27 @@ export function aplicarOperacionBoletin(
       break;
     }
 
+    case 'agregar_suspensiones_lote': {
+      const idsExistentes = new Set(baseActualizada.suspensiones.map((s) => s.id));
+      const nuevasValidas = (op.suspensiones || []).filter(
+        (s) =>
+          s &&
+          s.id &&
+          !idsExistentes.has(s.id) &&
+          s.grado.trim() &&
+          s.estudiante.trim() &&
+          s.fechaSuspension.trim()
+      );
+      if (nuevasValidas.length === 0) {
+        return baseActualizada;
+      }
+      boletinModificado = {
+        ...baseActualizada,
+        suspensiones: [...baseActualizada.suspensiones, ...nuevasValidas],
+      };
+      break;
+    }
+
     case 'eliminar_suspension': {
       boletinModificado = {
         ...baseActualizada,
@@ -586,7 +671,21 @@ export function aplicarOperacionBoletin(
     case 'agregar_suspension':
       seccion = 'Noti-Prácticas (Suspensiones)';
       accion = 'Registrar Suspensión';
-      descripcion = `Se registró un nuevo reporte de suspensión.`;
+      descripcion = `Se registró la suspensión de ${op.suspension.estudiante} (${op.suspension.grado}).`;
+      break;
+    case 'agregar_suspensiones_lote':
+      seccion = 'Noti-Prácticas (Suspensiones)';
+      accion =
+        op.suspensiones.length > 1
+          ? 'Registrar Lote de Suspensiones'
+          : 'Registrar Suspensión';
+      descripcion =
+        op.suspensiones.length === 1
+          ? `Se registró la suspensión de ${op.suspensiones[0].estudiante} (${op.suspensiones[0].grado}).`
+          : `Se registraron ${op.suspensiones.length} suspensiones en lote (${op.suspensiones
+              .map((s) => `${s.grado} ${s.estudiante}`)
+              .slice(0, 3)
+              .join(', ')}${op.suspensiones.length > 3 ? '...' : ''}).`;
       break;
     case 'eliminar_suspension':
       seccion = 'Noti-Prácticas (Suspensiones)';

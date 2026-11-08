@@ -44,6 +44,7 @@ import {
 } from '../types/notiprofes';
 import {
   filtrarEventosLargoPlazoVigentes,
+  parsearPegadoSuspensiones,
   validarActividadInput,
 } from '../utils/boletinLogic';
 import {
@@ -173,9 +174,17 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
   const [motivoFel, setMotivoFel] = useState('');
   const [nuevoAviso, setNuevoAviso] = useState('');
 
-  const [gradoSusp, setGradoSusp] = useState('');
-  const [estudianteSusp, setEstudianteSusp] = useState('');
-  const [fechaSusp, setFechaSusp] = useState('');
+  const crearFilasSuspensionIniciales = (cantidad = 5) =>
+    Array.from({ length: cantidad }, (_, idx) => ({
+      uid: `fila-susp-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+      grado: '',
+      estudiante: '',
+      fechaSuspension: '',
+    }));
+
+  const [filasSuspension, setFilasSuspension] = useState<
+    Array<{ uid: string; grado: string; estudiante: string; fechaSuspension: string }>
+  >(() => crearFilasSuspensionIniciales(5));
 
   const [horarioEditando, setHorarioEditando] = useState<HorarioPersonalApoyo | null>(
     null
@@ -799,31 +808,124 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
     }
   };
 
+  const actualizarCeldaSuspension = (
+    index: number,
+    campo: 'grado' | 'estudiante' | 'fechaSuspension',
+    valor: string
+  ) => {
+    setFilasSuspension((prev) =>
+      prev.map((fila, idx) => (idx === index ? { ...fila, [campo]: valor } : fila))
+    );
+  };
+
+  const agregarFilasSuspension = (cantidad = 1) => {
+    setFilasSuspension((prev) => [
+      ...prev,
+      ...crearFilasSuspensionIniciales(cantidad),
+    ]);
+  };
+
+  const eliminarFilaBorradorSuspension = (index: number) => {
+    setFilasSuspension((prev) => {
+      if (prev.length <= 1) {
+        return crearFilasSuspensionIniciales(1);
+      }
+      return prev.filter((_, idx) => idx !== index);
+    });
+  };
+
+  const manejarPegadoTablaSuspensiones = (
+    e: React.ClipboardEvent<HTMLInputElement>,
+    indiceFilaDestino: number
+  ) => {
+    const textoClip = e.clipboardData?.getData('text/plain') || '';
+    // Solo interceptar si el texto pegado tiene tabulaciones o saltos de línea (copiado de Excel o tabla Word)
+    if (!textoClip.includes('\t') && !textoClip.includes('\n') && !textoClip.includes('|')) {
+      return;
+    }
+
+    const filasExtraidas = parsearPegadoSuspensiones(textoClip);
+    if (filasExtraidas.length === 0) {
+      return;
+    }
+
+    e.preventDefault();
+    setErrorValidacion(null);
+
+    setFilasSuspension((prev) => {
+      const totalNecesario = Math.max(prev.length, indiceFilaDestino + filasExtraidas.length);
+      const copia = [...prev];
+      while (copia.length < totalNecesario) {
+        copia.push(...crearFilasSuspensionIniciales(1));
+      }
+
+      filasExtraidas.forEach((item, offset) => {
+        const pos = indiceFilaDestino + offset;
+        copia[pos] = {
+          ...copia[pos],
+          grado: item.grado || copia[pos].grado,
+          estudiante: item.estudiante || copia[pos].estudiante,
+          fechaSuspension: item.fechaSuspension || copia[pos].fechaSuspension,
+        };
+      });
+
+      return copia;
+    });
+
+    notificarGuardado(
+      `Se distribuyeron automáticamente ${filasExtraidas.length} fila(s) desde el portapapeles. Revise y pulse Guardar.`
+    );
+  };
+
   const handleAgregarSuspension = async (e: React.FormEvent) => {
     e.preventDefault();
+    setErrorValidacion(null);
     if (!usuarioActual) {
       onSolicitarLogin();
       return;
     }
-    if (!gradoSusp.trim() || !estudianteSusp.trim() || !fechaSusp.trim()) {
-      setErrorValidacion('Complete grado, nombre del estudiante y fecha de suspensión.');
+
+    const filasConAlgunDato = filasSuspension.filter(
+      (f) => f.grado.trim() || f.estudiante.trim() || f.fechaSuspension.trim()
+    );
+
+    if (filasConAlgunDato.length === 0) {
+      setErrorValidacion(
+        'Complete al menos una fila con Grado, Nombre del estudiante y Fecha(s) de suspensión.'
+      );
       return;
     }
+
+    const filaIncompleta = filasConAlgunDato.find(
+      (f) => !f.grado.trim() || !f.estudiante.trim() || !f.fechaSuspension.trim()
+    );
+    if (filaIncompleta) {
+      setErrorValidacion(
+        'Hay una fila con datos incompletos. Asegúrese de indicar Grado, Estudiante y Fecha(s) en todas las filas que vaya a registrar.'
+      );
+      return;
+    }
+
+    const loteNuevo = filasConAlgunDato.map((f, idx) => ({
+      id: `susp-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+      grado: f.grado.trim(),
+      estudiante: f.estudiante.trim(),
+      fechaSuspension: f.fechaSuspension.trim(),
+    }));
+
     const exito = await onEjecutarOperacion({
-      tipo: 'agregar_suspension',
-      suspension: {
-        id: `susp-${Date.now()}`,
-        grado: gradoSusp.trim(),
-        estudiante: estudianteSusp.trim(),
-        fechaSuspension: fechaSusp.trim(),
-      },
+      tipo: 'agregar_suspensiones_lote',
+      suspensiones: loteNuevo,
       autor: usuarioActual.nombre,
     });
+
     if (exito) {
-      setGradoSusp('');
-      setEstudianteSusp('');
-      setFechaSusp('');
-      notificarGuardado('Registro de suspensión actualizado.');
+      setFilasSuspension(crearFilasSuspensionIniciales(5));
+      notificarGuardado(
+        loteNuevo.length === 1
+          ? '1 suspensión registrada correctamente en la tabla.'
+          : `${loteNuevo.length} suspensiones registradas en lote correctamente.`
+      );
     }
   };
 
@@ -2682,61 +2784,156 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
               </div>
             </div>
 
-            <form onSubmit={handleAgregarSuspension} className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <div>
-                <label
-                  htmlFor="susp-grado"
-                  className="block text-xs font-semibold text-slate-700 mb-1"
-                >
-                  Grado:
-                </label>
-                <input
-                  id="susp-grado"
-                  type="text"
-                  value={gradoSusp}
-                  onChange={(e) => setGradoSusp(e.target.value)}
-                  placeholder="Ej: 6°2"
-                  className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-mono-tabular"
-                />
+            <form onSubmit={handleAgregarSuspension} className="space-y-3">
+              <div className="rounded-lg bg-sky-50/80 border border-sky-200/80 px-3 py-2 text-[11px] text-slate-700 flex flex-wrap items-center justify-between gap-2">
+                <span>
+                  <strong className="text-[#034EA2]">Carga rápida en lote:</strong> Escriba en las 5 filas o copie varias filas desde <strong>Excel / Word</strong> y péguelas (<kbd className="px-1.5 py-0.5 bg-white border border-slate-300 rounded text-[10px] font-mono">Ctrl+V</kbd>) en la primera celda.
+                </span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => agregarFilasSuspension(1)}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-white hover:bg-sky-100 text-[#034EA2] border border-sky-300 font-bold text-[11px] transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>+ Agregar fila</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => agregarFilasSuspension(5)}
+                    className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-white hover:bg-slate-100 text-slate-700 border border-slate-300 font-semibold text-[11px] transition-colors cursor-pointer"
+                    title="Añadir 5 filas más"
+                  >
+                    <span>+ 5 filas</span>
+                  </button>
+                </div>
               </div>
-              <div>
-                <label
-                  htmlFor="susp-estudiante"
-                  className="block text-xs font-semibold text-slate-700 mb-1"
-                >
-                  Estudiante:
-                </label>
-                <input
-                  id="susp-estudiante"
-                  type="text"
-                  value={estudianteSusp}
-                  onChange={(e) => setEstudianteSusp(e.target.value)}
-                  placeholder="Apellidos y Nombres"
-                  className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm"
-                />
+
+              <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                <table className="w-full border-collapse text-xs">
+                  <thead>
+                    <tr className="bg-slate-100 text-slate-700 border-b border-slate-200 font-bold">
+                      <th className="py-2 px-2 text-center w-8">#</th>
+                      <th className="py-2 px-2 text-left w-24">Grado</th>
+                      <th className="py-2 px-2 text-left">Estudiante (Apellidos y Nombres)</th>
+                      <th className="py-2 px-2 text-left w-44">Fecha(s)</th>
+                      <th className="py-2 px-1.5 text-center w-8" aria-label="Quitar fila" />
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200/80 bg-white">
+                    {filasSuspension.map((fila, idx) => {
+                      const tieneDatos =
+                        Boolean(fila.grado.trim()) ||
+                        Boolean(fila.estudiante.trim()) ||
+                        Boolean(fila.fechaSuspension.trim());
+                      return (
+                        <tr
+                          key={fila.uid}
+                          className={tieneDatos ? 'bg-sky-50/30' : 'hover:bg-slate-50/60'}
+                        >
+                          <td className="py-1.5 px-2 text-center font-mono-tabular font-bold text-slate-400">
+                            {idx + 1}
+                          </td>
+                          <td className="p-1.5">
+                            <input
+                              type="text"
+                              aria-label={`Grado fila ${idx + 1}`}
+                              value={fila.grado}
+                              onPaste={(e) => manejarPegadoTablaSuspensiones(e, idx)}
+                              onChange={(e) =>
+                                actualizarCeldaSuspension(idx, 'grado', e.target.value)
+                              }
+                              placeholder={idx === 0 ? 'Ej: 6°2' : 'Grado'}
+                              className="w-full rounded-md border border-slate-300 bg-slate-50 focus:bg-white focus:border-[#007DC5] focus:outline-none px-2 py-1.5 text-xs font-mono-tabular text-slate-900"
+                            />
+                          </td>
+                          <td className="p-1.5">
+                            <input
+                              type="text"
+                              aria-label={`Estudiante fila ${idx + 1}`}
+                              value={fila.estudiante}
+                              onPaste={(e) => manejarPegadoTablaSuspensiones(e, idx)}
+                              onChange={(e) =>
+                                actualizarCeldaSuspension(idx, 'estudiante', e.target.value)
+                              }
+                              placeholder={
+                                idx === 0 ? 'Apellidos y Nombres' : 'Nombre del estudiante'
+                              }
+                              className="w-full rounded-md border border-slate-300 bg-slate-50 focus:bg-white focus:border-[#007DC5] focus:outline-none px-2.5 py-1.5 text-xs text-slate-900"
+                            />
+                          </td>
+                          <td className="p-1.5">
+                            <input
+                              type="text"
+                              aria-label={`Fecha fila ${idx + 1}`}
+                              value={fila.fechaSuspension}
+                              onPaste={(e) => manejarPegadoTablaSuspensiones(e, idx)}
+                              onChange={(e) =>
+                                actualizarCeldaSuspension(
+                                  idx,
+                                  'fechaSuspension',
+                                  e.target.value
+                                )
+                              }
+                              placeholder={
+                                idx === 0 ? 'Ej: 5 y 6 de nov.' : 'Fecha(s) suspensión'
+                              }
+                              className="w-full rounded-md border border-slate-300 bg-slate-50 focus:bg-white focus:border-[#007DC5] focus:outline-none px-2 py-1.5 text-xs text-slate-900"
+                            />
+                          </td>
+                          <td className="p-1 text-center">
+                            <button
+                              type="button"
+                              onClick={() => eliminarFilaBorradorSuspension(idx)}
+                              title="Quitar o vaciar esta fila"
+                              aria-label={`Quitar fila ${idx + 1}`}
+                              className="p-1 text-slate-400 hover:text-rose-600 rounded hover:bg-rose-50 transition-colors cursor-pointer"
+                            >
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
               </div>
-              <div>
-                <label
-                  htmlFor="susp-fecha"
-                  className="block text-xs font-semibold text-slate-700 mb-1"
-                >
-                  Fecha(s):
-                </label>
-                <input
-                  id="susp-fecha"
-                  type="text"
-                  value={fechaSusp}
-                  onChange={(e) => setFechaSusp(e.target.value)}
-                  placeholder="Ej: 5 y 6 de noviembre"
-                  className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm"
-                />
-              </div>
-              <div className="sm:col-span-3">
+
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => agregarFilasSuspension(1)}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-xs font-semibold text-slate-700 transition-colors cursor-pointer"
+                  >
+                    <Plus className="w-3.5 h-3.5 text-[#007DC5]" />
+                    <span>Agregar otra celda / fila</span>
+                  </button>
+                  {filasSuspension.some(
+                    (f) => f.grado.trim() || f.estudiante.trim() || f.fechaSuspension.trim()
+                  ) && (
+                    <button
+                      type="button"
+                      onClick={() => setFilasSuspension(crearFilasSuspensionIniciales(5))}
+                      className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-slate-500 hover:text-slate-800 hover:bg-slate-100 transition-colors cursor-pointer"
+                    >
+                      Vaciar celdas
+                    </button>
+                  )}
+                </div>
+
                 <button
                   type="submit"
-                  className="w-full py-2 px-4 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg"
+                  className="py-2 px-4 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-lg cursor-pointer transition-colors"
                 >
-                  Registrar Suspensión en Tabla
+                  Registrar Suspensiones en Tabla (
+                  {
+                    filasSuspension.filter(
+                      (f) =>
+                        f.grado.trim() && f.estudiante.trim() && f.fechaSuspension.trim()
+                    ).length
+                  }{' '}
+                  listas)
                 </button>
               </div>
             </form>
