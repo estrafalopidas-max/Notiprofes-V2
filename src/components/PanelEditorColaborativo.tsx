@@ -163,12 +163,15 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
   );
   const [tipoDoc, setTipoDoc] = useState<'docx' | 'xlsx' | 'pdf' | 'link'>('docx');
 
-  const [fechaEventoLP, setFechaEventoLP] = useState('');
-  const [descEventoLP, setDescEventoLP] = useState('');
-  const [catEventoLP, setCatEventoLP] = useState<
-    'finalizacion' | 'proxima_actividad'
-  >('proxima_actividad');
-  const [destacadoLP, setDestacadoLP] = useState(false);
+  // Estados independientes para Tarjeta 1: Proyección de Calendario de Finalización
+  const [fechaFinLP, setFechaFinLP] = useState('');
+  const [descFinLP, setDescFinLP] = useState('');
+  const [destacadoFinLP, setDestacadoFinLP] = useState(false);
+
+  // Estados independientes para Tarjeta 2: Próximas Actividades y Capacitaciones
+  const [fechaProxLP, setFechaProxLP] = useState('');
+  const [descProxLP, setDescProxLP] = useState('');
+  const [destacadoProxLP, setDestacadoProxLP] = useState(false);
 
   const [docenteFel, setDocenteFel] = useState('');
   const [motivoFel, setMotivoFel] = useState('');
@@ -505,35 +508,71 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
     }
   };
 
-  const handleAgregarEventoLP = async (e: React.FormEvent) => {
+  const handleAgregarEventoFinalizacion = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorValidacion(null);
     if (!usuarioActual) {
       onSolicitarLogin();
       return;
     }
-    if (!fechaEventoLP.trim() || !descEventoLP.trim()) {
-      setErrorValidacion('Ingrese la fecha/rango y la descripción de la actividad a largo plazo.');
+    if (!fechaFinLP.trim() || !descFinLP.trim()) {
+      setErrorValidacion(
+        'Ingrese la fecha/rango y la descripción para la Proyección de Calendario de Finalización.'
+      );
       return;
     }
 
     const exito = await onEjecutarOperacion({
       tipo: 'agregar_evento_largo_plazo',
       evento: {
-        id: `cal-${Date.now()}`,
-        fechaTexto: fechaEventoLP.trim(),
-        descripcion: descEventoLP.trim(),
-        categoria: catEventoLP,
-        destacado: destacadoLP,
+        id: `cal-fin-${Date.now()}`,
+        fechaTexto: fechaFinLP.trim(),
+        descripcion: descFinLP.trim(),
+        categoria: 'finalizacion',
+        destacado: destacadoFinLP,
       },
       autor: usuarioActual.nombre,
     });
 
     if (exito) {
-      setFechaEventoLP('');
-      setDescEventoLP('');
-      setDestacadoLP(false);
-      notificarGuardado('Actividad a largo plazo incorporada al calendario.');
+      setFechaFinLP('');
+      setDescFinLP('');
+      setDestacadoFinLP(false);
+      notificarGuardado('Hito agregado a Proyección de Calendario de Finalización.');
+    }
+  };
+
+  const handleAgregarProximaActividad = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorValidacion(null);
+    if (!usuarioActual) {
+      onSolicitarLogin();
+      return;
+    }
+    if (!fechaProxLP.trim() || !descProxLP.trim()) {
+      setErrorValidacion(
+        'Ingrese la fecha/rango y la descripción para Próximas Actividades y Capacitaciones.'
+      );
+      return;
+    }
+
+    const exito = await onEjecutarOperacion({
+      tipo: 'agregar_evento_largo_plazo',
+      evento: {
+        id: `cal-prox-${Date.now()}`,
+        fechaTexto: fechaProxLP.trim(),
+        descripcion: descProxLP.trim(),
+        categoria: 'proxima_actividad',
+        destacado: destacadoProxLP,
+      },
+      autor: usuarioActual.nombre,
+    });
+
+    if (exito) {
+      setFechaProxLP('');
+      setDescProxLP('');
+      setDestacadoProxLP(false);
+      notificarGuardado('Evento agregado a Próximas Actividades y Capacitaciones.');
     }
   };
 
@@ -2225,254 +2264,368 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          <form
-            onSubmit={handleAgregarEventoLP}
-            className="lg:col-span-5 bg-white border border-slate-200/90 rounded-xl p-6 space-y-4"
-          >
-            <div className="border-b border-slate-100 pb-3">
-              <h2 className="text-base font-display font-bold text-slate-900 flex items-center gap-2">
-                <CalendarPlus className="w-4 h-4 text-blue-700" />
-                Agregar Actividad a Largo Plazo
-              </h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Estas fechas se conservan automáticamente de una semana a otra al clonar el boletín.
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                Ubicación en el boletín:
-              </label>
-              <DropdownPersonalizado
-                modo="simple"
-                anchoCompleto
-                ariaLabel="Ubicación en el boletín"
-                icono={<CalendarPlus className="w-4 h-4" />}
-                etiquetaBoton={
-                  catEventoLP === 'finalizacion'
-                    ? 'Proyección de Calendario de Finalización'
-                    : 'Próximas Actividades (Sección Inferior)'
-                }
-                valorSeleccionado={catEventoLP}
-                onChange={(val) =>
-                  setCatEventoLP(
-                    val as
-                      | 'finalizacion'
-                      | 'proxima_actividad'
-                  )
-                }
-                opciones={[
-                  {
-                    valor: 'finalizacion',
-                    etiqueta: 'Proyección de Calendario de Finalización',
-                  },
-                  {
-                    valor: 'proxima_actividad',
-                    etiqueta: 'Próximas Actividades (Sección Inferior)',
-                  },
-                ]}
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="lp-fecha"
-                className="block text-xs font-semibold text-slate-700 mb-1"
-              >
-                Fecha o rango de fechas:
-              </label>
-              <input
-                id="lp-fecha"
-                type="text"
-                value={fechaEventoLP}
-                onChange={(e) => setFechaEventoLP(e.target.value)}
-                placeholder="Ej: Del 17 al 20 de noviembre / 10 de diciembre"
-                className="w-full rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm text-slate-900"
-              />
-            </div>
-
-            <div>
-              <label
-                htmlFor="lp-descripcion"
-                className="block text-xs font-semibold text-slate-700 mb-1"
-              >
-                Descripción detallada:
-              </label>
-              <EditorTextoFormateado
-                id="lp-descripcion"
-                rows={3}
-                value={descEventoLP}
-                onChange={setDescEventoLP}
-                placeholder="Ej: Entrega de símbolos de 10° a 11° en el Auditorio..."
-              />
-            </div>
-
-            <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-800 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={destacadoLP}
-                onChange={(e) => setDestacadoLP(e.target.checked)}
-                className="accent-blue-700"
-              />
-              Destacar fecha clave en el boletín
-            </label>
-
-            <button
-              type="submit"
-              className="w-full py-2.5 px-4 text-xs font-semibold text-white bg-[#007DC5] hover:bg-[#034EA2] rounded-lg"
-            >
-              Guardar en Proyección a Largo Plazo
-            </button>
-          </form>
-
-          <div className="lg:col-span-7 bg-white border border-slate-200/90 rounded-xl p-6 space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
-              <h3 className="text-sm font-display font-bold text-slate-900">
-                Cronograma Anual y Actividades a Largo Plazo ({boletin.proyeccionCalendario.length})
-              </h3>
-
-              {boletin.proyeccionCalendario.length > 0 && (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  {confirmandoLimpieza === 'largo_plazo_vencidos' ? (
-                    <div className="inline-flex items-center gap-1.5 bg-amber-50 border border-amber-300 px-2.5 py-1 rounded-lg text-[11px]">
-                      <span className="font-semibold text-amber-950">
-                        ¿Conservar solo futuras vigentes?
-                      </span>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          if (!usuarioActual) return onSolicitarLogin();
-                          const ok = await onEjecutarOperacion({
-                            tipo: 'limpiar_eventos_largo_plazo',
-                            modo: 'solo_vencidos',
-                            autor: usuarioActual.nombre,
-                          });
-                          setConfirmandoLimpieza(null);
-                          if (ok) {
-                            notificarGuardado(
-                              'Se conservaron únicamente las actividades futuras vigentes en el cronograma.'
-                            );
-                          }
-                        }}
-                        className="px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-700 text-white font-bold cursor-pointer"
-                      >
-                        Sí, depurar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmandoLimpieza(null)}
-                        className="px-1.5 py-0.5 rounded text-slate-600 hover:bg-slate-200 font-semibold cursor-pointer"
-                      >
-                        Cancelar
-                      </button>
-                    </div>
-                  ) : confirmandoLimpieza === 'largo_plazo_todos' ? (
-                    <div className="inline-flex items-center gap-1.5 bg-rose-50 border border-rose-300 px-2.5 py-1 rounded-lg text-[11px]">
-                      <span className="font-semibold text-rose-950">
-                        ¿Vaciar las {boletin.proyeccionCalendario.length} actividades?
-                      </span>
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          if (!usuarioActual) return onSolicitarLogin();
-                          const ok = await onEjecutarOperacion({
-                            tipo: 'limpiar_eventos_largo_plazo',
-                            modo: 'todos',
-                            autor: usuarioActual.nombre,
-                          });
-                          setConfirmandoLimpieza(null);
-                          if (ok) {
-                            notificarGuardado(
-                              'Lista de actividades a largo plazo vaciada por completo.'
-                            );
-                          }
-                        }}
-                        className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-700 text-white font-bold cursor-pointer"
-                      >
-                        Sí, limpiar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmandoLimpieza(null)}
-                        className="px-1.5 py-0.5 rounded text-slate-600 hover:bg-slate-200 font-semibold cursor-pointer"
-                      >
-                        Cancelar
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmandoLimpieza('largo_plazo_vencidos')}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-[#034EA2] border border-sky-200 transition-colors cursor-pointer"
-                        title="Elimina las fechas que ya pasaron y conserva únicamente las actividades futuras vigentes"
-                      >
-                        <RotateCcw className="w-3 h-3" />
-                        <span>Conservar futuras vigentes</span>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmandoLimpieza('largo_plazo_todos')}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition-colors cursor-pointer"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                        <span>Limpiar lista</span>
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {boletin.proyeccionCalendario.length === 0 ? (
-              <div className="py-8 text-center text-xs text-slate-400 italic">
-                No hay actividades registradas en el cronograma a largo plazo para esta edición.
+          {/* BARRA SUPERIOR DE MANTENIMIENTO DEL CRONOGRAMA A LARGO PLAZO */}
+          <div className="bg-white border border-slate-200/90 rounded-xl px-5 py-3.5 flex flex-wrap items-center justify-between gap-3 shadow-2xs">
+            <div className="flex items-center gap-2.5">
+              <CalendarDays className="w-4 h-4 text-[#034EA2]" />
+              <div>
+                <h3 className="text-sm font-display font-bold text-slate-900">
+                  Gestión Separada de Cronograma a Largo Plazo ({boletin.proyeccionCalendario.length} registros totales)
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Cada tarjeta alimenta directamente su bloque respectivo en el Boletín Oficial y en el HTML público, sin necesidad de cambiar menús desplegables.
+                </p>
               </div>
-            ) : (
-              <div className="divide-y divide-slate-100 max-h-[540px] overflow-y-auto pr-1">
-                {boletin.proyeccionCalendario.map((ev) => (
-                  <div
-                    key={ev.id}
-                    className="py-3 flex items-start justify-between gap-3 text-sm"
-                  >
-                    <div>
-                      <div className="text-xs text-slate-400 font-mono-tabular uppercase">
-                        {ev.categoria === 'finalizacion'
-                          ? 'Calendario Finalización'
-                          : 'Próxima Actividad / Largo Plazo'}
-                      </div>
-                      <div className="text-slate-900 mt-0.5">
-                        <strong className={ev.destacado ? 'text-blue-700' : ''}>
-                          {ev.fechaTexto}:
-                        </strong>{' '}
-                        <TextoFormateado texto={ev.descripcion} />
-                      </div>
-                    </div>
+            </div>
+
+            {boletin.proyeccionCalendario.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                {confirmandoLimpieza === 'largo_plazo_vencidos' ? (
+                  <div className="inline-flex items-center gap-1.5 bg-amber-50 border border-amber-300 px-2.5 py-1 rounded-lg text-[11px]">
+                    <span className="font-semibold text-amber-950">
+                      ¿Conservar solo futuras vigentes en ambas tarjetas?
+                    </span>
                     <button
                       type="button"
-                      aria-label={`Eliminar evento ${ev.fechaTexto}`}
-                      onClick={() => {
-                        if (!usuarioActual) {
-                          onSolicitarLogin();
-                          return;
-                        }
-                        onEjecutarOperacion({
-                          tipo: 'eliminar_evento_largo_plazo',
-                          eventoId: ev.id,
+                      onClick={async () => {
+                        if (!usuarioActual) return onSolicitarLogin();
+                        const ok = await onEjecutarOperacion({
+                          tipo: 'limpiar_eventos_largo_plazo',
+                          modo: 'solo_vencidos',
                           autor: usuarioActual.nombre,
                         });
+                        setConfirmandoLimpieza(null);
+                        if (ok) {
+                          notificarGuardado(
+                            'Se conservaron únicamente las actividades futuras vigentes en ambas tarjetas.'
+                          );
+                        }
                       }}
-                      className="p-1.5 text-slate-400 hover:text-red-600 shrink-0 cursor-pointer"
+                      className="px-2 py-0.5 rounded bg-amber-600 hover:bg-amber-700 text-white font-bold cursor-pointer"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      Sí, depurar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmandoLimpieza(null)}
+                      className="px-1.5 py-0.5 rounded text-slate-600 hover:bg-slate-200 font-semibold cursor-pointer"
+                    >
+                      Cancelar
                     </button>
                   </div>
-                ))}
+                ) : confirmandoLimpieza === 'largo_plazo_todos' ? (
+                  <div className="inline-flex items-center gap-1.5 bg-rose-50 border border-rose-300 px-2.5 py-1 rounded-lg text-[11px]">
+                    <span className="font-semibold text-rose-950">
+                      ¿Vaciar las {boletin.proyeccionCalendario.length} actividades de ambas tarjetas?
+                    </span>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (!usuarioActual) return onSolicitarLogin();
+                        const ok = await onEjecutarOperacion({
+                          tipo: 'limpiar_eventos_largo_plazo',
+                          modo: 'todos',
+                          autor: usuarioActual.nombre,
+                        });
+                        setConfirmandoLimpieza(null);
+                        if (ok) {
+                          notificarGuardado(
+                            'Listas de actividades a largo plazo vaciadas por completo.'
+                          );
+                        }
+                      }}
+                      className="px-2 py-0.5 rounded bg-rose-600 hover:bg-rose-700 text-white font-bold cursor-pointer"
+                    >
+                      Sí, limpiar todo
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmandoLimpieza(null)}
+                      className="px-1.5 py-0.5 rounded text-slate-600 hover:bg-slate-200 font-semibold cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmandoLimpieza('largo_plazo_vencidos')}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-sky-50 hover:bg-sky-100 text-[#034EA2] border border-sky-200 transition-colors cursor-pointer"
+                      title="Elimina las fechas que ya pasaron y conserva únicamente las actividades futuras vigentes"
+                    >
+                      <RotateCcw className="w-3 h-3" />
+                      <span>Conservar futuras vigentes</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setConfirmandoLimpieza('largo_plazo_todos')}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 transition-colors cursor-pointer"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      <span>Vaciar ambas listas</span>
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>
-          </div>
+
+          {/* DOS TARJETAS SEPARADAS (ESPEJO EXACTO DEL BOLETÍN PÚBLICO) */}
+          {(() => {
+            const listaFinalizacion = boletin.proyeccionCalendario.filter(
+              (ev) => ev.categoria === 'finalizacion'
+            );
+            const listaProximas = boletin.proyeccionCalendario.filter(
+              (ev) => ev.categoria !== 'finalizacion'
+            );
+
+            return (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+                {/* TARJETA 1: PROYECCIÓN DE CALENDARIO DE FINALIZACIÓN */}
+                <div className="bg-white border border-slate-200/90 rounded-2xl p-6 space-y-5 shadow-2xs border-t-4 border-t-[#034EA2]">
+                  <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-2 h-6 rounded-full bg-[#034EA2]" />
+                      <div>
+                        <h2 className="text-base font-display font-extrabold uppercase tracking-tight text-[#034EA2]">
+                          Proyección de Calendario de Finalización
+                        </h2>
+                        <p className="text-xs text-slate-500">
+                          Hitos de cierre de periodo, comisiones, pruebas y clausura.
+                        </p>
+                      </div>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-full bg-blue-50 text-[#034EA2] border border-blue-200 text-xs font-mono-tabular font-bold shrink-0">
+                      {listaFinalizacion.length} hitos
+                    </span>
+                  </div>
+
+                  <form onSubmit={handleAgregarEventoFinalizacion} className="space-y-3.5 bg-slate-50/70 p-4 rounded-xl border border-slate-200/80">
+                    <div>
+                      <label
+                        htmlFor="lp-fin-fecha"
+                        className="block text-xs font-semibold text-slate-700 mb-1"
+                      >
+                        Fecha o rango de fechas:
+                      </label>
+                      <input
+                        id="lp-fin-fecha"
+                        type="text"
+                        value={fechaFinLP}
+                        onChange={(e) => setFechaFinLP(e.target.value)}
+                        placeholder="Ej: Del 17 al 20 de noviembre / 4 de diciembre"
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:border-[#034EA2]"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="lp-fin-descripcion"
+                        className="block text-xs font-semibold text-slate-700 mb-1"
+                      >
+                        Descripción del hito de finalización:
+                      </label>
+                      <EditorTextoFormateado
+                        id="lp-fin-descripcion"
+                        rows={2}
+                        value={descFinLP}
+                        onChange={setDescFinLP}
+                        placeholder="Ej: Comisiones de evaluación y promoción / Entrega de notas..."
+                        compact
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                      <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-800 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={destacadoFinLP}
+                          onChange={(e) => setDestacadoFinLP(e.target.checked)}
+                          className="accent-[#034EA2]"
+                        />
+                        Destacar hito clave
+                      </label>
+
+                      <button
+                        type="submit"
+                        className="py-2 px-4 text-xs font-bold text-white bg-[#034EA2] hover:bg-[#023b7a] rounded-lg inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Agregar a Calendario de Finalización</span>
+                      </button>
+                    </div>
+                  </form>
+
+                  <div className="space-y-2">
+                    <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                      Hitos registrados en esta tarjeta ({listaFinalizacion.length})
+                    </div>
+                    {listaFinalizacion.length === 0 ? (
+                      <div className="py-6 text-center text-xs text-slate-400 italic bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+                        No hay hitos registrados en Proyección de Calendario de Finalización.
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-slate-100 max-h-[420px] overflow-y-auto pr-1">
+                        {listaFinalizacion.map((ev) => (
+                          <div
+                            key={ev.id}
+                            className="py-2.5 flex items-start justify-between gap-3 text-xs sm:text-sm"
+                          >
+                            <div className="text-slate-900 leading-snug">
+                              <strong className={ev.destacado ? 'text-[#034EA2]' : 'text-slate-800'}>
+                                {ev.fechaTexto}:
+                              </strong>{' '}
+                              <TextoFormateado texto={ev.descripcion} />
+                            </div>
+                            <button
+                              type="button"
+                              aria-label={`Eliminar hito ${ev.fechaTexto}`}
+                              onClick={() => {
+                                if (!usuarioActual) {
+                                  onSolicitarLogin();
+                                  return;
+                                }
+                                onEjecutarOperacion({
+                                  tipo: 'eliminar_evento_largo_plazo',
+                                  eventoId: ev.id,
+                                  autor: usuarioActual.nombre,
+                                });
+                              }}
+                              className="p-1.5 text-slate-400 hover:text-red-600 shrink-0 cursor-pointer rounded-lg hover:bg-red-50 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* TARJETA 2: PRÓXIMAS ACTIVIDADES Y CAPACITACIONES */}
+                <div className="bg-white border border-slate-200/90 rounded-2xl p-6 space-y-5 shadow-2xs border-t-4 border-t-[#007DC5]">
+                  <div className="flex items-center justify-between gap-2 pb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-2 h-6 rounded-full bg-[#007DC5]" />
+                      <div>
+                        <h2 className="text-base font-display font-extrabold uppercase tracking-tight text-[#034EA2]">
+                          Próximas Actividades y Capacitaciones
+                        </h2>
+                        <p className="text-xs text-slate-500">
+                          Eventos institucionales próximos, salidas, capacitaciones y reuniones.
+                        </p>
+                      </div>
+                    </div>
+                    <span className="px-2.5 py-1 rounded-full bg-sky-50 text-[#007DC5] border border-sky-200 text-xs font-mono-tabular font-bold shrink-0">
+                      {listaProximas.length} eventos
+                    </span>
+                  </div>
+
+                  <form onSubmit={handleAgregarProximaActividad} className="space-y-3.5 bg-sky-50/40 p-4 rounded-xl border border-sky-200/70">
+                    <div>
+                      <label
+                        htmlFor="lp-prox-fecha"
+                        className="block text-xs font-semibold text-slate-700 mb-1"
+                      >
+                        Fecha o rango de fechas:
+                      </label>
+                      <input
+                        id="lp-prox-fecha"
+                        type="text"
+                        value={fechaProxLP}
+                        onChange={(e) => setFechaProxLP(e.target.value)}
+                        placeholder="Ej: Viernes 13 de noviembre / Semana entrante"
+                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:outline-none focus:border-[#007DC5]"
+                      />
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="lp-prox-descripcion"
+                        className="block text-xs font-semibold text-slate-700 mb-1"
+                      >
+                        Descripción de la próxima actividad o capacitación:
+                      </label>
+                      <EditorTextoFormateado
+                        id="lp-prox-descripcion"
+                        rows={2}
+                        value={descProxLP}
+                        onChange={setDescProxLP}
+                        placeholder="Ej: Entrega de símbolos de 10° a 11° en el Auditorio..."
+                        compact
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                      <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-800 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={destacadoProxLP}
+                          onChange={(e) => setDestacadoProxLP(e.target.checked)}
+                          className="accent-[#007DC5]"
+                        />
+                        Destacar actividad
+                      </label>
+
+                      <button
+                        type="submit"
+                        className="py-2 px-4 text-xs font-bold text-white bg-[#007DC5] hover:bg-[#034EA2] rounded-lg inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        <span>Agregar a Próximas Actividades</span>
+                      </button>
+                    </div>
+                  </form>
+
+                  <div className="space-y-2">
+                    <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                      Eventos registrados en esta tarjeta ({listaProximas.length})
+                    </div>
+                    {listaProximas.length === 0 ? (
+                      <div className="py-6 text-center text-xs text-slate-400 italic bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+                        No hay eventos registrados en Próximas Actividades y Capacitaciones.
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-slate-100 max-h-[420px] overflow-y-auto pr-1">
+                        {listaProximas.map((ev) => (
+                          <div
+                            key={ev.id}
+                            className="py-2.5 flex items-start justify-between gap-3 text-xs sm:text-sm"
+                          >
+                            <div className="text-slate-900 leading-snug">
+                              <strong className={ev.destacado ? 'text-[#007DC5]' : 'text-slate-800'}>
+                                {ev.fechaTexto}:
+                              </strong>{' '}
+                              <TextoFormateado texto={ev.descripcion} />
+                            </div>
+                            <button
+                              type="button"
+                              aria-label={`Eliminar evento ${ev.fechaTexto}`}
+                              onClick={() => {
+                                if (!usuarioActual) {
+                                  onSolicitarLogin();
+                                  return;
+                                }
+                                onEjecutarOperacion({
+                                  tipo: 'eliminar_evento_largo_plazo',
+                                  eventoId: ev.id,
+                                  autor: usuarioActual.nombre,
+                                });
+                              }}
+                              className="p-1.5 text-slate-400 hover:text-red-600 shrink-0 cursor-pointer rounded-lg hover:bg-red-50 transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
