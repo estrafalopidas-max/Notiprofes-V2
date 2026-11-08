@@ -30,7 +30,7 @@ import {
   UsuarioDirectivo,
 } from '../types/notiprofes';
 import { generarHtmlPublicoBoletin } from '../utils/boletinLogic';
-import { ModalCargaIA } from './ModalCargaIA';
+import { BotonConProgreso } from './ModalCargaIA';
 import {
   extraerIdCarpetaDrive,
   generarPdfBoletinOficial,
@@ -1264,23 +1264,26 @@ export const ModalPublicacionNube: React.FC<ModalPublicacionNubeProps> = ({
                 <span>Descargar PDF en mi equipo</span>
               </button>
 
-              <button
+              <BotonConProgreso
                 type="button"
-                disabled={subiendoDrivePdf}
+                variante="esmeralda"
+                cargando={subiendoDrivePdf}
                 onClick={handleSolicitarSincronizacionPdfDrive}
-                className="px-4 py-2 rounded-xl bg-[#059669] hover:bg-[#047857] text-white text-xs font-bold inline-flex items-center gap-2 shadow-xs transition-colors cursor-pointer disabled:opacity-60"
+                duracionEstimadaSegundos={8}
+                icono={<RefreshCw className="w-3.5 h-3.5 shrink-0" />}
+                iconoCargando={<RefreshCw className="w-3.5 h-3.5 animate-spin shrink-0" />}
+                etapas={[
+                  { porcentajeHasta: 30, textoAccion: 'Generando PDF vectorial...' },
+                  { porcentajeHasta: 65, textoAccion: 'Guardando en servidor...' },
+                  { porcentajeHasta: 90, textoAccion: 'Sincronizando con Drive...' },
+                  { porcentajeHasta: 100, textoAccion: 'Publicando enlace PDF...' },
+                ]}
+                className="px-4 py-2 rounded-xl text-xs font-bold shadow-xs min-w-[260px]"
               >
-                <RefreshCw
-                  className={`w-3.5 h-3.5 ${subiendoDrivePdf ? 'animate-spin' : ''}`}
-                />
-                <span>
-                  {subiendoDrivePdf
-                    ? 'Guardando PDF automáticamente...'
-                    : boletin.drivePdfInfo
-                      ? `Actualizar PDF en «${carpetaActivaBoletin}» (v${boletin.drivePdfInfo.version + 1})`
-                      : `Guardar PDF Oficial en «${carpetaActivaBoletin}» (v1)`}
-                </span>
-              </button>
+                {boletin.drivePdfInfo
+                  ? `Actualizar PDF en «${carpetaActivaBoletin}» (v${boletin.drivePdfInfo.version + 1})`
+                  : `Guardar PDF Oficial en «${carpetaActivaBoletin}» (v1)`}
+              </BotonConProgreso>
             </div>
           </div>
         )}
@@ -1541,54 +1544,27 @@ export const ModalPublicacionNube: React.FC<ModalPublicacionNubeProps> = ({
                 Cerrar
               </button>
 
-              <button
+              <BotonConProgreso
                 type="button"
-                disabled={sincronizando}
+                variante="esmeralda"
+                cargando={sincronizando || subiendoDrivePdf}
                 onClick={handlePublicarYSincronizar}
-                className="px-5 py-2.5 rounded-xl bg-[#059669] hover:bg-[#047857] disabled:opacity-60 text-white text-xs sm:text-sm font-bold inline-flex items-center gap-2 shadow-sm transition-all cursor-pointer"
+                duracionEstimadaSegundos={8}
+                icono={<CloudUpload className="w-4 h-4 shrink-0" />}
+                etapas={[
+                  { porcentajeHasta: 30, textoAccion: 'Sincronizando boletín...' },
+                  { porcentajeHasta: 65, textoAccion: 'Generando PDF oficial...' },
+                  { porcentajeHasta: 90, textoAccion: 'Actualizando en la nube...' },
+                  { porcentajeHasta: 100, textoAccion: 'Publicando cambios...' },
+                ]}
+                className="px-5 py-2.5 rounded-xl text-xs sm:text-sm font-bold shadow-sm min-w-[250px]"
               >
-                <CloudUpload className="w-4 h-4" />
-                <span>
-                  {sincronizando
-                    ? 'Sincronizando...'
-                    : 'Publicar y Sincronizar en la Nube'}
-                </span>
-              </button>
+                Publicar y Sincronizar en la Nube
+              </BotonConProgreso>
             </div>
           </div>
         </div>
       </div>
-
-      {/* MODAL / BARRA DE PROGRESO DE GENERACIÓN Y PUBLICACIÓN DE PDF */}
-      <ModalCargaIA
-        activo={subiendoDrivePdf}
-        operacionNombre={`Publicación de PDF Boletín N° ${boletin.numero}`}
-        titulo={`Publicando PDF Oficial · Edición N° ${boletin.numero}`}
-        subtitulo="Generando el archivo PDF vectorial con firmas institucionales y sincronizando la copia en la carpeta del servidor / Google Drive."
-        duracionEstimadaSegundos={12}
-        etapasPersonalizadas={[
-          {
-            porcentajeHasta: 25,
-            titulo: 'Generación de Documento PDF Vectorial',
-            descripcion: 'Renderizando maquetación tipográfica de alta fidelidad e insertando firmas de directivos...',
-          },
-          {
-            porcentajeHasta: 60,
-            titulo: 'Procesamiento de Buffer y Cifrado',
-            descripcion: 'Codificando el archivo PDF para almacenamiento seguro...',
-          },
-          {
-            porcentajeHasta: 85,
-            titulo: 'Sincronización en Carpeta del Servidor / Drive',
-            descripcion: `Guardando la versión oficial en la carpeta del año lectivo ${anioBoletinActual}...`,
-          },
-          {
-            porcentajeHasta: 100,
-            titulo: 'Enlace Público Listo',
-            descripcion: 'Actualizando metadatos de acceso público...',
-          },
-        ]}
-      />
     </div>
   );
 };

@@ -55,7 +55,7 @@ import {
   obtenerCalendarioOficialBoletin,
 } from '../utils/calendarioEscolar2026';
 import { DropdownPersonalizado } from './DropdownPersonalizado';
-import { ModalCargaIA, EtapaCargaIA } from './ModalCargaIA';
+import { BotonConProgreso } from './ModalCargaIA';
 import { EditorTextoFormateado, TextoFormateado } from './BarraFormatoTexto';
 
 interface PanelEditorColaborativoProps {
@@ -314,12 +314,7 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
   const [archivoDecretoMime, setArchivoDecretoMime] = useState<string>('application/pdf');
   const [textoDecretoOpcional, setTextoDecretoOpcional] = useState<string>('');
   const [analizandoDecreto, setAnalizandoDecreto] = useState<boolean>(false);
-  const [esMinimizadoModalCarga, setEsMinimizadoModalCarga] = useState<boolean>(false);
-  const [operacionCargaNombre, setOperacionCargaNombre] = useState<string>('Análisis de Decreto con IA');
-  const [operacionCargaSubtitulo, setOperacionCargaSubtitulo] = useState<string>(
-    'El motor de IA Gemini está analizando los artículos, semanas lectivas y festivos colombianos para NotiProfes Digital.'
-  );
-  const [etapasCargaIA, setEtapasCargaIA] = useState<EtapaCargaIA[] | undefined>(undefined);
+  const [generandoPlantillaAnual, setGenerandoPlantillaAnual] = useState<boolean>(false);
   const [borradorCalendarioAnual, setBorradorCalendarioAnual] =
     useState<ConfiguracionCalendarioAnual | null>(null);
   const [origenBorrador, setOrigenBorrador] = useState<'ia_gemini' | 'algoritmico' | null>(
@@ -656,38 +651,6 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
       return;
     }
 
-    setOperacionCargaNombre(`Análisis de Decreto de Calendario ${anioDecreto} con IA Gemini`);
-    setOperacionCargaSubtitulo(
-      `Procesando el documento oficial de la Resolución del año ${anioDecreto}. Extrayendo semanas lectivas, desarrollo institucional y vacaciones.`
-    );
-    setEtapasCargaIA([
-      {
-        porcentajeHasta: 20,
-        titulo: 'Lectura e Inspección de Documento',
-        descripcion: 'Iniciando conexión segura con el motor de IA Gemini y leyendo la estructura del archivo...',
-      },
-      {
-        porcentajeHasta: 45,
-        titulo: 'Extracción de Semanas y Artículos',
-        descripcion: 'Identificando semanas lectivas, desarrollo institucional, vacaciones docentes y receso estudiantil...',
-      },
-      {
-        porcentajeHasta: 75,
-        titulo: 'Cruce con Festivos Oficiales de Colombia',
-        descripcion: 'Calculando los 18 festivos del año lectivo por Ley Emiliani y definiendo los tres periodos académicos...',
-      },
-      {
-        porcentajeHasta: 92,
-        titulo: 'Estructuración y Formateo JSON',
-        descripcion: 'Organizando el calendario oficial en el formato estandarizado para NotiProfes Digital...',
-      },
-      {
-        porcentajeHasta: 100,
-        titulo: 'Finalizando y Sincronizando',
-        descripcion: 'Consolidando la vista previa del calendario en la plataforma...',
-      },
-    ]);
-    setEsMinimizadoModalCarga(false);
     setAnalizandoDecreto(true);
 
     try {
@@ -728,29 +691,7 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
       return;
     }
 
-    setOperacionCargaNombre(`Generación de Plantilla de Festivos de Colombia ${anioDecreto}`);
-    setOperacionCargaSubtitulo(
-      `Calculando automáticamente las 40 semanas lectivas, recesos y los 18 festivos colombianos para el año ${anioDecreto}.`
-    );
-    setEtapasCargaIA([
-      {
-        porcentajeHasta: 30,
-        titulo: 'Cálculo de Festivos Ley Emiliani',
-        descripcion: `Generando los 18 festivos de Colombia para el año ${anioDecreto}...`,
-      },
-      {
-        porcentajeHasta: 70,
-        titulo: 'Estructuración de Semanas Lectivas',
-        descripcion: 'Distribuyendo las 40 semanas de clase y 6 de desarrollo institucional...',
-      },
-      {
-        porcentajeHasta: 100,
-        titulo: 'Sincronización de Plantilla',
-        descripcion: 'Generando el borrador del calendario anual...',
-      },
-    ]);
-    setEsMinimizadoModalCarga(false);
-    setAnalizandoDecreto(true);
+    setGenerandoPlantillaAnual(true);
 
     try {
       const resp = await fetch('/api/calendario/generar-plantilla-anual', {
@@ -774,7 +715,7 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
     } catch {
       setErrorValidacion('Error de red al solicitar la plantilla anual.');
     } finally {
-      setAnalizandoDecreto(false);
+      setGenerandoPlantillaAnual(false);
     }
   };
 
@@ -1959,14 +1900,22 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
                       />
                     </div>
                     <div className="flex flex-col justify-end">
-                      <button
+                      <BotonConProgreso
                         type="button"
+                        variante="celeste"
+                        cargando={generandoPlantillaAnual}
                         disabled={analizandoDecreto}
                         onClick={handleGenerarPlantillaAnual}
-                        className="w-full py-2 px-3 text-xs font-bold text-[#034EA2] bg-sky-50 hover:bg-sky-100 border border-sky-200 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                        duracionEstimadaSegundos={3}
+                        etapas={[
+                          { porcentajeHasta: 40, textoAccion: 'Calculando festivos...' },
+                          { porcentajeHasta: 80, textoAccion: 'Armando semanas...' },
+                          { porcentajeHasta: 100, textoAccion: 'Generando plantilla...' },
+                        ]}
+                        className="w-full py-2 px-3 text-xs font-bold rounded-lg"
                       >
                         Generar Plantilla {anioDecreto} (Sin IA)
-                      </button>
+                      </BotonConProgreso>
                     </div>
                   </div>
 
@@ -2077,17 +2026,24 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
                     <span className="text-[11px] text-slate-500">
                       Los 18 festivos oficiales de Colombia del año {anioDecreto} se calculan automáticamente por Ley Emiliani.
                     </span>
-                    <button
+                    <BotonConProgreso
                       type="button"
-                      disabled={analizandoDecreto}
+                      variante="azul"
+                      cargando={analizandoDecreto}
+                      disabled={generandoPlantillaAnual}
                       onClick={handleAnalizarDecretoConIA}
-                      className="py-2.5 px-5 text-xs font-bold text-white bg-[#007DC5] hover:bg-[#034EA2] rounded-lg shadow-xs transition-colors inline-flex items-center gap-2 cursor-pointer disabled:opacity-60"
+                      duracionEstimadaSegundos={18}
+                      icono={<Sparkles className="w-4 h-4 shrink-0" />}
+                      etapas={[
+                        { porcentajeHasta: 22, textoAccion: 'Leyendo resolución...' },
+                        { porcentajeHasta: 50, textoAccion: 'Extrayendo semanas...' },
+                        { porcentajeHasta: 78, textoAccion: 'Cruzando festivos...' },
+                        { porcentajeHasta: 100, textoAccion: 'Estructurando calendario...' },
+                      ]}
+                      className="py-2.5 px-5 text-xs font-bold rounded-lg shadow-xs min-w-[240px]"
                     >
-                      <Sparkles className="w-4 h-4" />
-                      {analizandoDecreto
-                        ? 'Analizando Decreto...'
-                        : `Extraer Calendario ${anioDecreto} con IA`}
-                    </button>
+                      Extraer Calendario {anioDecreto} con IA
+                    </BotonConProgreso>
                   </div>
                 </div>
               </div>
@@ -3902,18 +3858,6 @@ export const PanelEditorColaborativo: React.FC<PanelEditorColaborativoProps> = (
           </div>
         </div>
       )}
-
-      {/* MODAL / BARRA DE PROGRESO GLOBAL DE IA */}
-      <ModalCargaIA
-        activo={analizandoDecreto}
-        operacionNombre={operacionCargaNombre}
-        titulo={operacionCargaNombre}
-        subtitulo={operacionCargaSubtitulo}
-        etapasPersonalizadas={etapasCargaIA}
-        duracionEstimadaSegundos={20}
-        esMinimizado={esMinimizadoModalCarga}
-        onMinimizarToggle={() => setEsMinimizadoModalCarga(!esMinimizadoModalCarga)}
-      />
     </div>
   );
 };

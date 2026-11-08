@@ -219,6 +219,20 @@ test('formatearTextoAHtmlSeguro convierte formato ligero a HTML seguro y escapa 
   assert.ok(plano.includes('Reunión obligatoria de área con acta y asistencia en Auditorio Urgente Ver circular (https://ievillaflora.edu.co)'));
   assert.ok(!plano.includes('**'));
   assert.ok(!plano.includes('=='));
+
+  // Caso de marcadores apilados o colores anidados accidentalmente
+  const anidado = '****__==[azul:[magenta:Arepa***negrita***]]==__****';
+  const htmlAnidado = formatearTextoAHtmlSeguro(anidado);
+  assert.ok(!htmlAnidado.includes('**'));
+  assert.ok(!htmlAnidado.includes('__'));
+  assert.ok(!htmlAnidado.includes('=='));
+  assert.ok(!htmlAnidado.includes('[azul:'));
+  assert.ok(!htmlAnidado.includes('[magenta:'));
+  assert.ok(htmlAnidado.includes('Arepa'));
+  assert.ok(htmlAnidado.includes('negrita'));
+
+  const planoAnidado = limpiarFormatoTextoPlano(anidado);
+  assert.equal(planoAnidado, 'Arepa negrita'.replace(' ', ''));
 });
 
 test('parsearPegadoSuspensiones y agregar_suspensiones_lote procesan tablas de Excel/Word en lote', async () => {
