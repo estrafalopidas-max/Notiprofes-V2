@@ -47,6 +47,10 @@ import { DropdownPersonalizado } from './components/DropdownPersonalizado';
 import { calcularEstadoCalendarioBoletin } from './utils/calendarioEscolar2026';
 import { descargarPdfBoletinDirecto } from './services/googleDrivePdfService';
 import { ToastNotificacionEditor } from './components/ToastNotificacionEditor';
+import {
+  BannerEstadoConexion,
+  useOnlineStatus,
+} from './components/EstadoConexionPWA';
 
 type VistaPrincipal = 'boletin' | 'editor' | 'nas';
 
@@ -69,27 +73,53 @@ export default function App() {
   const [vistaActiva, setVistaActiva] = useState<VistaPrincipal>('boletin');
   const [seccionEditorInicial, setSeccionEditorInicial] =
     useState<SeccionEditor>('semanal');
-  const [boletin, setBoletin] = useState<BoletinSemanal>(BOLETIN_40_SEED);
-  const [listaBoletines, setListaBoletines] = useState<ResumenBoletin[]>([
-    {
-      id: BOLETIN_39_SEED.id,
-      numero: BOLETIN_39_SEED.numero,
-      fechaEmision: BOLETIN_39_SEED.fechaEmision,
-      semanaTexto: BOLETIN_39_SEED.semanaTexto,
-    },
-    {
-      id: BOLETIN_40_SEED.id,
-      numero: BOLETIN_40_SEED.numero,
-      fechaEmision: BOLETIN_40_SEED.fechaEmision,
-      semanaTexto: BOLETIN_40_SEED.semanaTexto,
-    },
-    {
-      id: BOLETIN_41_SEED.id,
-      numero: BOLETIN_41_SEED.numero,
-      fechaEmision: BOLETIN_41_SEED.fechaEmision,
-      semanaTexto: BOLETIN_41_SEED.semanaTexto,
-    },
-  ]);
+  const [boletin, setBoletin] = useState<BoletinSemanal>(() => {
+    try {
+      const guardado = localStorage.getItem('notiprofes_offline_boletin_actual');
+      if (guardado) {
+        const parsed = JSON.parse(guardado) as BoletinSemanal;
+        if (parsed && parsed.id && Array.isArray(parsed.dias)) {
+          return parsed;
+        }
+      }
+    } catch {
+      // Ignorar fallo de lectura local
+    }
+    return BOLETIN_40_SEED;
+  });
+  const [listaBoletines, setListaBoletines] = useState<ResumenBoletin[]>(() => {
+    try {
+      const guardado = localStorage.getItem('notiprofes_offline_lista_boletines');
+      if (guardado) {
+        const parsed = JSON.parse(guardado) as ResumenBoletin[];
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed;
+        }
+      }
+    } catch {
+      // Ignorar fallo de lectura local
+    }
+    return [
+      {
+        id: BOLETIN_39_SEED.id,
+        numero: BOLETIN_39_SEED.numero,
+        fechaEmision: BOLETIN_39_SEED.fechaEmision,
+        semanaTexto: BOLETIN_39_SEED.semanaTexto,
+      },
+      {
+        id: BOLETIN_40_SEED.id,
+        numero: BOLETIN_40_SEED.numero,
+        fechaEmision: BOLETIN_40_SEED.fechaEmision,
+        semanaTexto: BOLETIN_40_SEED.semanaTexto,
+      },
+      {
+        id: BOLETIN_41_SEED.id,
+        numero: BOLETIN_41_SEED.numero,
+        fechaEmision: BOLETIN_41_SEED.fechaEmision,
+        semanaTexto: BOLETIN_41_SEED.semanaTexto,
+      },
+    ];
+  });
 
   const [sidebarColapsado, setSidebarColapsado] = useState<boolean>(false);
   const [menuMovilAbierto, setMenuMovilAbierto] = useState<boolean>(false);
@@ -201,6 +231,14 @@ export default function App() {
         const dataLista = await respLista.json();
         if (Array.isArray(dataLista.boletines)) {
           setListaBoletines(dataLista.boletines);
+          try {
+            localStorage.setItem(
+              'notiprofes_offline_lista_boletines',
+              JSON.stringify(dataLista.boletines)
+            );
+          } catch {
+            // Ignorar cuota de almacenamiento
+          }
         }
       }
 
@@ -208,12 +246,61 @@ export default function App() {
         const dataBoletin = await respBoletin.json();
         if (dataBoletin.boletin) {
           setBoletin(dataBoletin.boletin);
+          try {
+            localStorage.setItem(
+              'notiprofes_offline_boletin_actual',
+              JSON.stringify(dataBoletin.boletin)
+            );
+            localStorage.setItem(
+              `notiprofes_offline_boletin_${dataBoletin.boletin.id}`,
+              JSON.stringify(dataBoletin.boletin)
+            );
+          } catch {
+            // Ignorar cuota de almacenamiento
+          }
         }
       }
     } catch {
-      // Mantiene datos semilla locales si el servidor está reiniciando
+      // Si no hay conexión, intenta recuperar la copia específica guardada en caché local
+      if (idEspecifico) {
+        try {
+          const copiaLocal = localStorage.getItem(
+            `notiprofes_offline_boletin_${idEspecifico}`
+          );
+          if (copiaLocal) {
+            const parsed = JSON.parse(copiaLocal) as BoletinSemanal;
+            if (parsed && parsed.id) {
+              setBoletin(parsed);
+            }
+          }
+        } catch {
+          // Mantener boletín actual en memoria
+        }
+      }
     }
   }, []);
+
+  const { isOnline, mostrarAvisoReconectado } = useOnlineStatus(
+    useCallback(() => {
+      cargarBoletinesServidor();
+    }, [cargarBoletinesServidor])
+  );
+
+  // Mantener sincronizada la copia local ante cambios colaborativos por WebSocket
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'notiprofes_offline_boletin_actual',
+        JSON.stringify(boletin)
+      );
+      localStorage.setItem(
+        `notiprofes_offline_boletin_${boletin.id}`,
+        JSON.stringify(boletin)
+      );
+    } catch {
+      // Ignorar cuota local
+    }
+  }, [boletin]);
 
   useEffect(() => {
     cargarBoletinesServidor();
@@ -557,6 +644,14 @@ export default function App() {
           </a>
         </header>
 
+        <BannerEstadoConexion
+          isOnline={isOnline}
+          mostrarAvisoReconectado={mostrarAvisoReconectado}
+          numeroBoletin={boletin.numero}
+          ultimaActualizacionTexto={boletin.fechaEmision}
+          onReintentarSincronizacion={() => cargarBoletinesServidor(boletin.id)}
+        />
+
         <main className="flex-1 flex flex-col items-center justify-center my-4 gap-4">
           {avisoInactividad && (
             <aside
@@ -736,6 +831,14 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      <BannerEstadoConexion
+        isOnline={isOnline}
+        mostrarAvisoReconectado={mostrarAvisoReconectado}
+        numeroBoletin={boletin.numero}
+        ultimaActualizacionTexto={boletin.fechaEmision}
+        onReintentarSincronizacion={() => cargarBoletinesServidor(boletin.id)}
+      />
 
       {/* CUERPO INFERIOR: MENÚ LATERAL (UNIDO AL ENCABEZADO CON 0PX DE SEPARACIÓN) + CONTENIDO PRINCIPAL */}
       <div className="flex-1 flex min-w-0 relative">

@@ -2153,15 +2153,40 @@ export function generarHtmlPublicoBoletin(boletin: BoletinSemanal): string {
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .aviso-offline-publico {
+      display: none;
+      background: #f59e0b;
+      color: #0f172a;
+      padding: 10px 20px;
+      font-size: 12.5px;
+      font-weight: 700;
+      text-align: center;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.15);
+    }
+    .aviso-online-publico {
+      display: none;
+      background: #059669;
+      color: #ffffff;
+      padding: 8px 20px;
+      font-size: 12px;
+      font-weight: 700;
+      text-align: center;
+    }
     @media print {
       body { background: #fff; padding: 0; }
-      .barra-superior { display: none; }
+      .barra-superior, .aviso-offline-publico, .aviso-online-publico { display: none !important; }
       .contenedor { box-shadow: none; border: none; }
     }
   </style>
 </head>
 <body>
   <div class="contenedor">
+    <div id="banner-offline-notiprofes" class="aviso-offline-publico" role="status" aria-live="polite">
+      📡 <strong>Modo sin conexión activo:</strong> Estás consultando la copia guardada en tu dispositivo del <strong>Boletín N° ${boletin.numero}</strong>. La información se actualizará automáticamente al recuperar la red.
+    </div>
+    <div id="banner-online-notiprofes" class="aviso-online-publico" role="status" aria-live="polite">
+      ✓ Conexión restablecida · Sincronizando boletín con el servidor institucional...
+    </div>
     <div class="franja-corporativa"></div>
 
     <div class="hero-institucional">
@@ -2686,6 +2711,43 @@ export function generarHtmlPublicoBoletin(boletin: BoletinSemanal): string {
         window.print();
       });
     }
+
+    // Registro de Service Worker y detección en vivo de pérdida/recuperación de red para el docente
+    (function inicializarResilienciaOffline() {
+      var bannerOffline = document.getElementById('banner-offline-notiprofes');
+      var bannerOnline = document.getElementById('banner-online-notiprofes');
+
+      function actualizarEstadoRed() {
+        if (!navigator.onLine) {
+          if (bannerOffline) bannerOffline.style.display = 'block';
+          if (bannerOnline) bannerOnline.style.display = 'none';
+        } else {
+          if (bannerOffline) bannerOffline.style.display = 'none';
+        }
+      }
+
+      window.addEventListener('offline', function() {
+        actualizarEstadoRed();
+      });
+
+      window.addEventListener('online', function() {
+        if (bannerOffline) bannerOffline.style.display = 'none';
+        if (bannerOnline) {
+          bannerOnline.style.display = 'block';
+          setTimeout(function() {
+            bannerOnline.style.display = 'none';
+          }, 3500);
+        }
+      });
+
+      actualizarEstadoRed();
+
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', function() {
+          navigator.serviceWorker.register('/sw-notiprofes.js', { scope: '/' }).catch(function() {});
+        });
+      }
+    })();
   </script>
 </body>
 </html>`;

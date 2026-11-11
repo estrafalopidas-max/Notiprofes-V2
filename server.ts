@@ -1262,10 +1262,16 @@ async function iniciarServidor() {
     res.sendFile(rutaPdf);
   });
 
-  // Servir activos institucionales públicos (logo oficial y adjuntos en /public/assets y /assets)
+  // Servir activos institucionales públicos (logo oficial, adjuntos, iconos PWA y Service Worker)
   const publicDirPath = path.resolve(process.cwd(), 'public');
   app.use('/public', express.static(publicDirPath));
   app.use('/assets', express.static(path.join(publicDirPath, 'assets')));
+  app.use(express.static(publicDirPath));
+  app.get('/sw-notiprofes.js', (_req, res) => {
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(path.join(publicDirPath, 'sw-notiprofes.js'));
+  });
   app.get('/favicon.ico', (_req, res) => {
     res.sendFile(path.join(publicDirPath, 'favicon.ico'));
   });
